@@ -1,0 +1,873 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Music of the Spheres</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width:100%; height:100%; background:#000; overflow:hidden; font-family:'Georgia',serif; user-select:none; }
+
+    #title-card {
+      position:fixed; inset:0;
+      display:flex; flex-direction:column; align-items:center; justify-content:center;
+      background:#000008; z-index:20; transition:opacity 1.4s ease; cursor:pointer;
+    }
+    #title-card h1   { color:#FFF8E7; font-size:30px; font-weight:300; letter-spacing:7px; text-transform:uppercase; margin-bottom:10px; }
+    #title-card p    { color:#555580; font-size:13px; letter-spacing:3px; margin-bottom:44px; }
+    #title-card .hint { color:#33334A; font-size:11px; letter-spacing:2px; }
+    #title-card.fade-out { opacity:0; pointer-events:none; }
+
+    #controls {
+      position:fixed; bottom:0; left:0; right:0;
+      display:flex; flex-wrap:wrap; align-items:center; justify-content:center;
+      gap:14px 24px; padding:9px 20px 12px;
+      background:linear-gradient(to top, rgba(0,0,8,0.92) 0%, transparent 100%);
+      z-index:10; opacity:0; transition:opacity 2s ease;
+    }
+    #controls.visible { opacity:1; }
+
+    .ctrl-group { display:flex; align-items:center; gap:7px; }
+    .ctrl-label { font-family:monospace; font-size:8px; letter-spacing:2px; color:#44445E; text-transform:uppercase; white-space:nowrap; }
+    .ctrl-value { font-family:monospace; font-size:9px; color:#55557A; min-width:30px; }
+    .sep        { width:1px; height:22px; background:#111128; }
+
+    input[type=range] { -webkit-appearance:none; width:88px; height:2px; background:#181830; outline:none; border-radius:1px; }
+    input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:9px; height:9px; border-radius:50%; background:#44446A; cursor:pointer; transition:background .2s; }
+    input[type=range]::-webkit-slider-thumb:hover { background:#7777AA; }
+
+    .btn-row { display:flex; gap:3px; }
+    .pill {
+      font-family:monospace; font-size:8px; letter-spacing:1px;
+      color:#35355A; background:#06060F; border:1px solid #141428;
+      border-radius:10px; padding:3px 8px; cursor:pointer; white-space:nowrap;
+      transition:color .2s, border-color .2s, background .2s;
+    }
+    .pill:hover  { color:#6666AA; border-color:#2D2D55; }
+    .pill.active { color:#9999DD; border-color:#4444AA; background:#0D0D22; }
+    .pill.muted  { color:#443333; border-color:#332222; background:#080608; }
+  </style>
+</head>
+<body>
+
+<div id="title-card">
+  <h1>Music of the Spheres</h1>
+  <p>orbital resonance as polyrhythm</p>
+  <div class="hint">click to begin</div>
+</div>
+
+<div id="controls">
+  <!-- VOLUME first — set before anything else -->
+  <div class="ctrl-group">
+    <div class="ctrl-label">Volume</div>
+    <input type="range" id="vol-slider" min="0" max="100" value="80" step="5">
+    <div class="ctrl-value" id="vol-val">80%</div>
+  </div>
+  <div class="sep"></div>
+  <!-- TEMPO — how fast -->
+  <div class="ctrl-group">
+    <div class="ctrl-label">Tempo</div>
+    <input type="range" id="tempo-slider" min="10" max="1200" value="100" step="10">
+    <div class="ctrl-value" id="tempo-val">1.0×</div>
+  </div>
+  <div class="sep"></div>
+  <!-- RESONANCE + TIMBRE — what you hear -->
+  <div class="ctrl-group">
+    <div class="ctrl-label">Resonance</div>
+    <div class="btn-row">
+      <button class="pill active" data-res="4-2-1">4·2·1</button>
+      <button class="pill" data-res="3-2-1">3·2·1</button>
+      <button class="pill" data-res="5-3-2">5·3·2</button>
+      <button class="pill" data-res="7-4-2">7·4·2</button>
+    </div>
+    <div class="ctrl-value" id="res-val">march</div>
+  </div>
+  <div class="sep"></div>
+  <div class="ctrl-group">
+    <div class="ctrl-label">Timbre</div>
+    <div class="btn-row">
+      <button class="pill active" data-wave="sine">sine</button>
+      <button class="pill" data-wave="triangle">tri</button>
+      <button class="pill" data-wave="sawtooth">saw</button>
+    </div>
+    <div class="ctrl-value" id="wave-val">pure</div>
+  </div>
+  <div class="sep"></div>
+  <!-- TRAIL — what you see -->
+  <div class="ctrl-group">
+    <div class="ctrl-label">Trail</div>
+    <input type="range" id="trail-slider" min="5" max="120" value="50" step="5">
+    <div class="ctrl-value" id="trail-val">med</div>
+  </div>
+  <div class="sep"></div>
+  <!-- RETROGRADE — the physics experiment -->
+  <div class="ctrl-group">
+    <div class="ctrl-label">Retrograde</div>
+    <div class="btn-row">
+      <button class="pill" data-retro="inner">in</button>
+      <button class="pill" data-retro="middle">mid</button>
+      <button class="pill" data-retro="outer">out</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
+<script>
+
+// ─── Shared state ──────────────────────────────────────────────────────────
+
+let speedMult  = 1.0;
+let waveType   = 'sine';
+let trailLen   = 50;
+let volumeMax  = 0.8;
+let retrograde = { inner:false, middle:false, outer:false };
+let muted      = { inner:false, middle:false, outer:false };
+let resonance  = { inner:1, middle:2, outer:4 };
+let freqs      = [440, 330, 220];
+
+const RESONANCE_PRESETS = {
+  '4-2-1': { inner:1, middle:2, outer:4, label:'march',  freqs:[440,330,220] },
+  '3-2-1': { inner:1, middle:2, outer:3, label:'waltz',  freqs:[528,352,176] },
+  '5-3-2': { inner:2, middle:3, outer:5, label:'spiral', freqs:[480,320,192] },
+  '7-4-2': { inner:2, middle:4, outer:7, label:'strange',freqs:[420,280,168] },
+};
+
+// ─── Audio ─────────────────────────────────────────────────────────────────
+
+let audioCtx   = null;
+let audioReady = false;
+let masterVol  = 0.0;
+
+function getCtx() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  return audioCtx;
+}
+function playTone(freq, vol, attack, decay, wave) {
+  if (!audioReady || masterVol < 0.01) return;
+  const ctx = getCtx();
+  const osc = ctx.createOscillator(), env = ctx.createGain();
+  const now = ctx.currentTime;
+  const w = wave || waveType;
+  osc.type = w;
+  osc.frequency.value = freq;
+  const wg = w==='sawtooth' ? 0.4 : w==='triangle' ? 0.7 : 1.0;
+  env.gain.setValueAtTime(0, now);
+  env.gain.linearRampToValueAtTime(vol * masterVol * wg * volumeMax, now + attack);
+  env.gain.exponentialRampToValueAtTime(0.0001, now + attack + decay);
+  osc.connect(env); env.connect(ctx.destination);
+  osc.start(now); osc.stop(now + attack + decay + 0.05);
+}
+
+// ─── Physics constants ─────────────────────────────────────────────────────
+
+const C_INNER  = 0xFCD34D;
+const C_MIDDLE = 0x34D399;
+const C_OUTER  = 0xA78BFA;
+const T_BASE   = 3000;
+let   R_BASE   = 100;
+
+function getOrbitalParams() {
+  const r = resonance;
+  const ti = T_BASE*r.inner, tm = T_BASE*r.middle, to = T_BASE*r.outer;
+  const ri = R_BASE * Math.pow(r.inner,  2/3);
+  const rm = R_BASE * Math.pow(r.middle, 2/3);
+  const ro = R_BASE * Math.pow(r.outer,  2/3);
+  const wi = (Math.PI*2)/ti * (retrograde.inner  ? -1 : 1);
+  const wm = (Math.PI*2)/tm * (retrograde.middle ? -1 : 1);
+  const wo = (Math.PI*2)/to * (retrograde.outer  ? -1 : 1);
+  return { ti, tm, to, ri, rm, ro, wi, wm, wo };
+}
+
+// ─── Scene ─────────────────────────────────────────────────────────────────
+
+class Spheres extends Phaser.Scene {
+  constructor() { super('Spheres'); }
+
+  create() {
+    const W = this.scale.width, H = this.scale.height;
+    this.W = W; this.H = H; this.CX = W/2; this.CY = H/2;
+    R_BASE = Math.min(W, H) * 0.115;
+
+    this.cameras.main.setBackgroundColor('#000008');
+
+    // ── Layer stack ───────────────────────────────────────────
+    this.makeNebulae();
+    this.makeStarField();
+    this.twinkleG    = this.add.graphics();
+    this.shootG      = this.add.graphics();   // shooting stars
+    this.guides      = this.add.graphics();
+    this.trailG      = this.add.graphics();
+    this.spiralG     = this.add.graphics();   // fibonacci spiral
+    this.alignG      = this.add.graphics();
+    this.starG       = this.add.graphics();
+    this.drawStar(0, 0);
+
+    this.pulses = [];
+    for (let i = 0; i < 30; i++) {
+      this.pulses.push({ g:this.add.graphics(), active:false,
+        x:0, y:0, r:0, maxR:0, age:0, dur:0, color:0, isChord:false });
+    }
+
+    this.bodyG = {
+      inner:  this.makeBodyGraphic(C_INNER,  8),
+      middle: this.makeBodyGraphic(C_MIDDLE, 11),
+      outer:  this.makeBodyGraphic(C_OUTER,  9),
+    };
+
+    // ── State ─────────────────────────────────────────────────
+    this.trails       = { inner:[], middle:[], outer:[] };
+    this.trailLastPos = { inner:null, middle:null, outer:null };
+    this.lastPos      = { inner:{x:0,y:0}, middle:{x:0,y:0}, outer:{x:0,y:0} };
+    this.θ            = { inner:0, middle:Math.PI*0.66, outer:Math.PI*1.33 };
+    this.orbitFloor   = { inner:0, middle:0, outer:0 };
+    this.alignIntensity  = 0;
+    this.nebulaBreath    = 0;
+    this.chordFlash      = 0;
+    this.starClickFlash  = 0;
+    this.spiralFlash     = 0;
+    this.beatLog         = { inner:[], middle:[], outer:[] };
+    this.lastChordTime   = -99999;
+    this.lastWhisperTime = -99999;
+    this.elapsed         = 0;
+    this.started         = false;
+
+    // Shooting stars
+    this.shootingStars    = [];
+    this.nextShootingTime = 12000 + Math.random() * 55000;
+
+    // Pre-compute Fibonacci spiral points (drawn at chord moments)
+    this.spiralPoints = this.buildSpiralPoints();
+
+    // ── HUD layers ────────────────────────────────────────────
+    this.rhythmG = this.add.graphics();
+    this.legendG = this.add.graphics();
+    this.legendTexts = [];
+
+    this.add.text(W/2, 22, 'MUSIC OF THE SPHERES', {
+      fontFamily:'Georgia,serif', fontSize:'11px', color:'#1A1A2E', letterSpacing:5,
+    }).setOrigin(0.5, 0);
+
+    this.makeLegend();
+    this.redrawGuides();
+    this.buildSpiralPoints();
+
+    // ── Input ─────────────────────────────────────────────────
+    this.input.on('pointerdown', p => this.handleClick(p.x, p.y));
+
+    // ── Callbacks for controls ────────────────────────────────
+    window.applyResonance = (preset) => {
+      resonance = { inner:preset.inner, middle:preset.middle, outer:preset.outer };
+      freqs = preset.freqs;
+      this.trails = { inner:[], middle:[], outer:[] };
+      this.trailLastPos = { inner:null, middle:null, outer:null };
+      this.syncOrbitFloors();
+      this.redrawGuides();
+      this.refreshLegend();
+    };
+    window.refreshRetrograde = () => {
+      this.syncOrbitFloors();
+      this.redrawGuides();
+    };
+
+    this.time.delayedCall(900, () => { this.started = true; });
+  }
+
+  syncOrbitFloors() {
+    this.orbitFloor = {
+      inner:  Math.floor(this.θ.inner  / (Math.PI*2)),
+      middle: Math.floor(this.θ.middle / (Math.PI*2)),
+      outer:  Math.floor(this.θ.outer  / (Math.PI*2)),
+    };
+  }
+
+  // ── Click handling ────────────────────────────────────────────────────
+
+  handleClick(px, py) {
+    if (!this.started) return;
+    const { CX, CY } = this;
+
+    // Central star
+    if (Math.hypot(px-CX, py-CY) < 32) {
+      this.starClick();
+      return;
+    }
+
+    // Orbital bodies
+    for (const k of ['inner','middle','outer']) {
+      const lp = this.lastPos[k];
+      if (lp && Math.hypot(px-lp.x, py-lp.y) < 26) {
+        this.toggleMute(k);
+        return;
+      }
+    }
+  }
+
+  starClick() {
+    const align = this.getAlignmentDegree();
+    this.starClickFlash = 1.0;
+
+    if (align > 0.65) {
+      // Near alignment — play the chord
+      playTone(freqs[0], 0.15, 0.02, 1.4);
+      playTone(freqs[1], 0.13, 0.02, 1.4);
+      playTone(freqs[2], 0.14, 0.02, 1.8);
+      this.emitPulse(this.CX, this.CY, 0xFFFFFF, true);
+      this.spiralFlash = 1.0;
+    } else if (align > 0.3) {
+      // Partial alignment — two voices
+      playTone(freqs[0], 0.15, 0.015, 1.0);
+      playTone(freqs[1], 0.12, 0.015, 1.0);
+      this.emitPulse(this.CX, this.CY, 0xFFEEAA, false);
+    } else {
+      // Bodies spread — single high bright tone
+      playTone(freqs[0] * 1.5, 0.14, 0.01, 0.6);
+      this.emitPulse(this.CX, this.CY, 0xFFFFFF, false);
+    }
+  }
+
+  toggleMute(key) {
+    muted[key] = !muted[key];
+    const alpha = muted[key] ? 0.22 : 1.0;
+    this.bodyG[key].setAlpha(alpha);
+    // Update button state in HTML
+    const btn = document.querySelector(`[data-retro="${key}"]`);
+    // (retro buttons are separate — mute state lives on body itself visually)
+  }
+
+  // ── Space background ──────────────────────────────────────────────────
+
+  makeNebulae() {
+    const { W, H, CX, CY } = this;
+
+    const nA = this.add.graphics();
+    nA._base = 1.0; nA._pulse = 0.6;
+    this.softBlob(nA, CX+W*0.28, CY-H*0.22, W*0.30, 0x1A2A88, 0.006);
+    this.softBlob(nA, CX+W*0.20, CY-H*0.28, W*0.22, 0x3322AA, 0.007);
+    this.softBlob(nA, CX+W*0.34, CY-H*0.16, W*0.18, 0x2244CC, 0.005);
+    this.softBlob(nA, CX+W*0.16, CY-H*0.18, W*0.14, 0x5533BB, 0.006);
+    this.softBlob(nA, CX+W*0.26, CY-H*0.32, W*0.10, 0x7799EE, 0.005);
+
+    const nB = this.add.graphics();
+    nB._base = 0.9; nB._pulse = 0.4;
+    this.softBlob(nB, CX-W*0.30, CY+H*0.26, W*0.28, 0x771A00, 0.006);
+    this.softBlob(nB, CX-W*0.20, CY+H*0.18, W*0.20, 0xAA3311, 0.006);
+    this.softBlob(nB, CX-W*0.36, CY+H*0.20, W*0.16, 0x882233, 0.005);
+    this.softBlob(nB, CX-W*0.18, CY+H*0.32, W*0.12, 0xCC5511, 0.005);
+    this.softBlob(nB, CX-W*0.28, CY+H*0.32, W*0.08, 0xEE8833, 0.004);
+
+    const nC = this.add.graphics();
+    nC._base = 0.7; nC._pulse = 0.25;
+    this.softBlob(nC, CX-W*0.33, CY-H*0.24, W*0.24, 0x0D3344, 0.005);
+    this.softBlob(nC, CX-W*0.25, CY-H*0.30, W*0.16, 0x1A4455, 0.005);
+    this.softBlob(nC, CX-W*0.38, CY-H*0.18, W*0.13, 0x115533, 0.004);
+
+    this.nebulae = [nA, nB, nC];
+  }
+
+  softBlob(g, x, y, maxR, color, baseA) {
+    const steps = 18;
+    for (let i = 0; i < steps; i++) {
+      const t = i / steps;
+      g.fillStyle(color, baseA * (0.3 + t * 1.4));
+      g.fillCircle(x, y, maxR * (1 - t * 0.6));
+    }
+  }
+
+  makeStarField() {
+    const { W, H } = this;
+    const g = this.add.graphics();
+
+    for (let i = 0; i < 400; i++) {
+      g.fillStyle(0xCCCCFF, 0.04 + Math.random()*0.09);
+      g.fillCircle(Math.random()*W, Math.random()*H, 0.3 + Math.random()*0.3);
+    }
+    for (let i = 0; i < 180; i++) {
+      const warm = Math.random() < 0.3;
+      g.fillStyle(warm ? 0xFFEECC : 0xCCDDFF, 0.12 + Math.random()*0.28);
+      g.fillCircle(Math.random()*W, Math.random()*H, 0.4 + Math.random()*0.7);
+    }
+
+    const bright = [];
+    for (let i = 0; i < 45; i++) {
+      const x = Math.random()*W, y = Math.random()*H;
+      const r = 0.9 + Math.random()*1.6;
+      const a = 0.45 + Math.random()*0.45;
+      const warm = Math.random() < 0.4;
+      g.fillStyle(warm ? 0xFFEECC : 0xEEEEFF, a);
+      g.fillCircle(x, y, r);
+      bright.push({ x, y, r, a, warm });
+    }
+    bright.sort((a,b) => b.r-a.r).slice(0,10).forEach(s => {
+      const col = s.warm ? 0xFFEECC : 0xCCDDFF;
+      const len = s.r*6 + 8;
+      [[1,0],[-1,0],[0,1],[0,-1]].forEach(([dx,dy]) => {
+        for (let step = 0; step < 5; step++) {
+          const t = step/5;
+          const d = len*t;
+          g.lineStyle(s.r*(1-t)*0.9+0.3, col, s.a*(1-t)*0.7);
+          g.beginPath(); g.moveTo(s.x+dx*d, s.y+dy*d);
+          g.lineTo(s.x+dx*(d+len/5), s.y+dy*(d+len/5)); g.strokePath();
+        }
+      });
+    });
+
+    this.twinklers = bright.slice(0,14).map(s => ({
+      ...s, phase: Math.random()*Math.PI*2, speed: 0.3+Math.random()*0.8,
+    }));
+  }
+
+  drawTwinkleStars(elapsed) {
+    this.twinkleG.clear();
+    this.twinklers.forEach(s => {
+      const pulse = 0.5 + 0.5*Math.sin(elapsed*0.001*s.speed + s.phase);
+      const a = s.a * (0.5 + 0.5*pulse);
+      const r = s.r * (0.8 + 0.25*pulse);
+      this.twinkleG.fillStyle(s.warm ? 0xFFEECC : 0xEEEEFF, a);
+      this.twinkleG.fillCircle(s.x, s.y, r);
+      if (s.r > 1.4) {
+        const col = s.warm ? 0xFFEECC : 0xCCDDFF;
+        const len = r*5+6;
+        [[1,0],[-1,0],[0,1],[0,-1]].forEach(([dx,dy]) => {
+          this.twinkleG.lineStyle(r*0.6, col, a*pulse*0.5);
+          this.twinkleG.beginPath();
+          this.twinkleG.moveTo(s.x, s.y);
+          this.twinkleG.lineTo(s.x+dx*len, s.y+dy*len);
+          this.twinkleG.strokePath();
+        });
+      }
+    });
+  }
+
+  // ── Shooting stars ────────────────────────────────────────────────────
+
+  spawnShootingStar() {
+    const { W, H } = this;
+    const margin = 15;
+
+    // Any direction — avoid pure cardinal angles (those look wrong)
+    // Pick angle, then nudge away from 0/90/180/270
+    let angle = Math.random() * Math.PI * 2;
+    const cardinal = Math.round(angle / (Math.PI*0.5)) * (Math.PI*0.5);
+    if (Math.abs(angle - cardinal) < 0.18) angle += 0.22 * (Math.random()<0.5 ? 1 : -1);
+
+    const speed = 900 + Math.random()*800;
+    const vx = Math.cos(angle)*speed;
+    const vy = Math.sin(angle)*speed;
+
+    // Start from whichever screen edge the star is travelling away from
+    let x, y;
+    if (Math.abs(vx) >= Math.abs(vy)) {
+      x = vx > 0 ? -margin : W+margin;
+      y = H*0.05 + Math.random()*H*0.9;
+    } else {
+      y = vy > 0 ? -margin : H+margin;
+      x = W*0.05 + Math.random()*W*0.9;
+    }
+
+    this.shootingStars.push({ x, y, vx, vy, age:0, maxAge:260+Math.random()*200 });
+
+    // Rare chime (30% chance)
+    if (Math.random() < 0.3) playTone(1400+Math.random()*600, 0.03, 0.01, 0.9, 'sine');
+
+    // Next shooting star: 50–110 seconds from now
+    this.nextShootingTime = this.elapsed + 50000 + Math.random()*60000;
+  }
+
+  updateShootingStars(delta) {
+    this.shootG.clear();
+    const dt = delta / 1000;
+
+    for (let i = this.shootingStars.length-1; i >= 0; i--) {
+      const s = this.shootingStars[i];
+      s.x += s.vx * dt;
+      s.y += s.vy * dt;
+      s.age += delta;
+
+      const t = s.age / s.maxAge;
+      if (t >= 1) { this.shootingStars.splice(i,1); continue; }
+
+      const brightness = t < 0.15 ? t/0.15 : 1 - ((t-0.15)/0.85);
+      const trailLen   = 80 + s.maxAge * 0.12;
+      const tx = s.x - s.vx*dt*trailLen*0.005;
+      const ty = s.y - s.vy*dt*trailLen*0.005;
+
+      // Core streak
+      this.shootG.lineStyle(1.5, 0xFFFFFF, brightness*0.9);
+      this.shootG.beginPath(); this.shootG.moveTo(s.x, s.y);
+      this.shootG.lineTo(tx, ty); this.shootG.strokePath();
+
+      // Soft outer glow streak
+      this.shootG.lineStyle(3, 0xCCDDFF, brightness*0.25);
+      this.shootG.beginPath(); this.shootG.moveTo(s.x, s.y);
+      this.shootG.lineTo(tx, ty); this.shootG.strokePath();
+
+      // Head sparkle
+      this.shootG.fillStyle(0xFFFFFF, brightness*0.9);
+      this.shootG.fillCircle(s.x, s.y, 1.5);
+    }
+  }
+
+  // ── Fibonacci spiral ──────────────────────────────────────────────────
+
+  buildSpiralPoints() {
+    // Golden spiral: r(θ) = a·e^(b·θ), b = ln(φ)/(π/2)
+    const phi = 1.6180339887;
+    const b   = Math.log(phi) / (Math.PI/2);  // ≈ 0.3063
+    const a   = 7;
+    const pts = [];
+    const steps = 200;
+    const θStart = 3.0, θEnd = 11.0;
+    for (let i = 0; i <= steps; i++) {
+      const θ = θStart + (θEnd - θStart) * (i/steps);
+      const r = a * Math.exp(b*θ);
+      pts.push({ θ, r, t: i/steps });
+    }
+    this.spiralPoints = pts;
+  }
+
+  drawSpiral(flash) {
+    this.spiralG.clear();
+    if (flash < 0.01) return;
+
+    const { CX, CY } = this;
+    const offset = this.elapsed * 0.0002; // very slow drift rotation
+
+    for (let i = 1; i < this.spiralPoints.length; i++) {
+      const p = this.spiralPoints[i];
+      const pp = this.spiralPoints[i-1];
+      // Fade: outer arm a bit dimmer, whole thing fades with flash
+      const outerFade = 1 - p.t * 0.5;
+      const alpha = flash * outerFade * 0.55;
+      if (alpha < 0.01) continue;
+
+      const x1 = CX + pp.r * Math.cos(pp.θ + offset);
+      const y1 = CY + pp.r * Math.sin(pp.θ + offset);
+      const x2 = CX + p.r  * Math.cos(p.θ  + offset);
+      const y2 = CY + p.r  * Math.sin(p.θ  + offset);
+
+      this.spiralG.lineStyle(1.5, 0xFFCC44, alpha);
+      this.spiralG.beginPath();
+      this.spiralG.moveTo(x1, y1);
+      this.spiralG.lineTo(x2, y2);
+      this.spiralG.strokePath();
+    }
+  }
+
+  // ── Orbital system ────────────────────────────────────────────────────
+
+  redrawGuides() {
+    const { ri, rm, ro } = getOrbitalParams();
+    const { CX, CY } = this;
+    this.guides.clear();
+    [[ri,C_INNER],[rm,C_MIDDLE],[ro,C_OUTER]].forEach(([r,c]) => {
+      this.guides.lineStyle(1, c, 0.06);
+      this.guides.strokeCircle(CX, CY, r);
+    });
+  }
+
+  drawStar(breathe, clickFlash) {
+    const { CX, CY } = this;
+    const total = breathe + (clickFlash||0)*0.8;
+    const r = 18 + total*5;
+    this.starG.clear();
+    this.starG.fillStyle(0xFFFDF0, 1.0);  this.starG.fillCircle(CX, CY, r);
+    this.starG.fillStyle(0xFFE082, 0.35); this.starG.fillCircle(CX, CY, r*1.6);
+    this.starG.fillStyle(0xFFCC44, 0.10); this.starG.fillCircle(CX, CY, r*2.6);
+    this.starG.fillStyle(0xFF9900, 0.04); this.starG.fillCircle(CX, CY, r*4.2);
+    // Extra click-flash ring
+    if (clickFlash > 0.1) {
+      this.starG.fillStyle(0xFFFFFF, clickFlash*0.15);
+      this.starG.fillCircle(CX, CY, r*5.5);
+    }
+  }
+
+  makeBodyGraphic(color, r) {
+    const g = this.add.graphics();
+    g.fillStyle(color, 1.0);  g.fillCircle(0, 0, r);
+    g.fillStyle(color, 0.4);  g.fillCircle(0, 0, r*1.8);
+    g.fillStyle(color, 0.12); g.fillCircle(0, 0, r*3.0);
+    return g;
+  }
+
+  makeLegend() {
+    const { ti, tm, to } = getOrbitalParams();
+    const { H } = this;
+    const items = [
+      { hex:C_INNER,  label:`in  ${(ti/1000).toFixed(1)}s  ${freqs[0]}Hz`, y:H-112 },
+      { hex:C_MIDDLE, label:`mid ${(tm/1000).toFixed(1)}s  ${freqs[1]}Hz`, y:H-98  },
+      { hex:C_OUTER,  label:`out ${(to/1000).toFixed(1)}s  ${freqs[2]}Hz`, y:H-84  },
+    ];
+    items.forEach(i => {
+      this.legendG.fillStyle(i.hex, 0.5); this.legendG.fillCircle(18, i.y, 3);
+      this.legendTexts.push(
+        this.add.text(28, i.y, i.label, {
+          fontFamily:'monospace', fontSize:'9px', color:'#484868'
+        }).setOrigin(0, 0.5)
+      );
+    });
+  }
+
+  refreshLegend() {
+    this.legendTexts.forEach(t => t.destroy());
+    this.legendTexts = []; this.legendG.clear(); this.makeLegend();
+  }
+
+  emitPulse(x, y, color, isChord) {
+    const p = this.pulses.find(p => !p.active);
+    if (!p) return;
+    Object.assign(p, { active:true, x, y, color,
+      r: isChord?20:9, maxR: isChord?190:58,
+      age:0, dur: isChord?2200:900, isChord });
+  }
+
+  updatePulses(delta) {
+    for (const p of this.pulses) {
+      if (!p.active) { p.g.clear(); continue; }
+      p.age += delta;
+      const t = p.age/p.dur;
+      if (t >= 1) { p.active=false; p.g.clear(); continue; }
+      const ease = 1-(1-t)*(1-t);
+      const r = p.r + (p.maxR-p.r)*ease;
+      p.g.clear();
+      p.g.lineStyle(p.isChord?2:1.5, p.color, (1-t)*(p.isChord?0.65:0.45));
+      p.g.strokeCircle(p.x, p.y, r);
+      if (p.isChord && t < 0.6) {
+        p.g.lineStyle(1, 0xFFFFFF, (1-t/0.6)*0.22);
+        p.g.strokeCircle(p.x, p.y, r*0.55);
+      }
+    }
+  }
+
+  getAlignmentDegree() {
+    const norm = a => ((a%(Math.PI*2))+Math.PI*2)%(Math.PI*2);
+    const ai=norm(this.θ.inner), am=norm(this.θ.middle), ao=norm(this.θ.outer);
+    const d = (a,b) => Math.min(Math.abs(a-b), Math.PI*2-Math.abs(a-b));
+    return Math.max(0, 1-Math.max(d(ai,am),d(am,ao),d(ai,ao))/0.8);
+  }
+
+  drawTrail(points, color) {
+    if (points.length < 2) return;
+    for (let i = 1; i < points.length; i++) {
+      const t = i / points.length;       // 0 = oldest, 1 = newest (at body)
+      const alpha = Math.pow(t, 1.4) * 0.6;
+      const width = 1.2 + t * 5.5;      // thin tail, thick head
+      this.trailG.lineStyle(width, color, alpha);
+      this.trailG.beginPath();
+      this.trailG.moveTo(points[i-1].x, points[i-1].y);
+      this.trailG.lineTo(points[i].x,   points[i].y);
+      this.trailG.strokePath();
+    }
+  }
+
+  updateRhythmDisplay() {
+    const { to } = getOrbitalParams();
+    const { W, H } = this;
+    const chartY = H - 76;
+    this.rhythmG.clear();
+    const voices = [
+      { log:this.beatLog.inner,  color:C_INNER,  yOff:-8 },
+      { log:this.beatLog.middle, color:C_MIDDLE, yOff: 0 },
+      { log:this.beatLog.outer,  color:C_OUTER,  yOff: 8 },
+    ];
+    voices.forEach(v => {
+      v.log.slice(-12).forEach(t => {
+        const age = (this.elapsed-t)/to;
+        if (age > 0.95) return;
+        const x = W/2-70 + (1-age)*140;
+        this.rhythmG.fillStyle(v.color, (1-age)*0.65);
+        this.rhythmG.fillCircle(x, chartY+v.yOff, 2.5);
+      });
+    });
+    this.rhythmG.lineStyle(1, 0x0E0E1A, 0.5);
+    this.rhythmG.strokeRect(W/2-72, chartY-11, 144, 22);
+  }
+
+  // ── Main loop ─────────────────────────────────────────────────────────
+
+  update(time, delta) {
+    if (!this.started) return;
+    const dt = Math.min(delta, 100) * speedMult;
+    this.elapsed += dt;
+
+    const { ri, rm, ro, wi, wm, wo, to } = getOrbitalParams();
+    const { CX, CY } = this;
+
+    this.θ.inner  += wi*dt;
+    this.θ.middle += wm*dt;
+    this.θ.outer  += wo*dt;
+
+    // Beat detection: floor change in either direction
+    const newFloor = {
+      inner:  Math.floor(this.θ.inner  / (Math.PI*2)),
+      middle: Math.floor(this.θ.middle / (Math.PI*2)),
+      outer:  Math.floor(this.θ.outer  / (Math.PI*2)),
+    };
+    const innerBeat  = newFloor.inner  !== this.orbitFloor.inner;
+    const middleBeat = newFloor.middle !== this.orbitFloor.middle;
+    const outerBeat  = newFloor.outer  !== this.orbitFloor.outer;
+    if (innerBeat)  { this.beatLog.inner.push(this.elapsed);  if (this.beatLog.inner.length  >20) this.beatLog.inner.shift(); }
+    if (middleBeat) { this.beatLog.middle.push(this.elapsed); if (this.beatLog.middle.length >20) this.beatLog.middle.shift(); }
+    if (outerBeat)  { this.beatLog.outer.push(this.elapsed);  if (this.beatLog.outer.length  >20) this.beatLog.outer.shift(); }
+    this.orbitFloor = newFloor;
+
+    // Positions
+    const pos = {
+      inner:  { x: CX+ri*Math.cos(this.θ.inner),  y: CY+ri*Math.sin(this.θ.inner)  },
+      middle: { x: CX+rm*Math.cos(this.θ.middle), y: CY+rm*Math.sin(this.θ.middle) },
+      outer:  { x: CX+ro*Math.cos(this.θ.outer),  y: CY+ro*Math.sin(this.θ.outer)  },
+    };
+    this.lastPos = { ...pos };
+
+    // Beat sounds (skip if muted)
+    if (innerBeat  && !muted.inner)  { this.emitPulse(pos.inner.x,  pos.inner.y,  C_INNER,  false); playTone(freqs[0],0.14,0.012,0.45); }
+    if (middleBeat && !muted.middle) { this.emitPulse(pos.middle.x, pos.middle.y, C_MIDDLE, false); playTone(freqs[1],0.14,0.015,0.70); }
+    if (outerBeat  && !muted.outer)  { this.emitPulse(pos.outer.x,  pos.outer.y,  C_OUTER,  false); playTone(freqs[2],0.16,0.020,1.00); }
+
+    // Alignment chord
+    const alignDeg  = this.getAlignmentDegree();
+    const cooldown  = (to*0.75) / Math.max(speedMult, 0.1);
+    if (alignDeg > 0.85 && (this.elapsed-this.lastChordTime) > cooldown) {
+      this.lastChordTime = this.elapsed;
+      this.chordFlash  = 1.0;
+      this.spiralFlash = 1.0;
+      this.emitPulse(CX, CY, 0xFFFFFF, true);
+      playTone(freqs[0],0.12,0.02,1.2);
+      playTone(freqs[1],0.12,0.02,1.2);
+      playTone(freqs[2],0.14,0.02,1.8);
+    }
+
+    // Alignment whisper — subtle hint when bodies are approaching
+    if (alignDeg > 0.45 && alignDeg < 0.72 && audioReady &&
+        (this.elapsed - this.lastWhisperTime) > 5000 / Math.max(speedMult, 0.3)) {
+      this.lastWhisperTime = this.elapsed;
+      const pitch = freqs[0] * 2 * (0.9 + alignDeg * 0.3);
+      playTone(pitch, 0.025, 0.06, 1.8, 'sine');
+    }
+
+    // Decay flash values
+    if (this.chordFlash     > 0) this.chordFlash     = Math.max(0, this.chordFlash     - delta*0.0008);
+    if (this.starClickFlash > 0) this.starClickFlash  = Math.max(0, this.starClickFlash - delta*0.002);
+    if (this.spiralFlash    > 0) this.spiralFlash     = Math.max(0, this.spiralFlash    - delta*0.00045);
+
+    // Trails (distance-based)
+    const minDist = 2.2;
+    ['inner','middle','outer'].forEach(k => {
+      const last = this.trailLastPos[k];
+      const dist = last ? Math.hypot(pos[k].x-last.x, pos[k].y-last.y) : Infinity;
+      if (dist >= minDist) {
+        this.trails[k].push({...pos[k]});
+        this.trailLastPos[k] = {...pos[k]};
+        if (this.trails[k].length > trailLen) this.trails[k].shift();
+      }
+    });
+
+    this.alignIntensity = Phaser.Math.Linear(this.alignIntensity, alignDeg, 0.04);
+    this.nebulaBreath   = Phaser.Math.Linear(this.nebulaBreath, this.alignIntensity*0.6+0.08, 0.012);
+    if (masterVol < 1) masterVol = Math.min(1, masterVol + dt/3000);
+
+    // Shooting star spawn check (use real elapsed, not speed-scaled)
+    if (this.elapsed > this.nextShootingTime && this.shootingStars.length < 2) {
+      this.spawnShootingStar();
+    }
+
+    // ── Draw ───────────────────────────────────────────────────────────
+
+    // Nebulae breathe
+    this.nebulae.forEach(n => {
+      n.setAlpha(n._base*(0.7+this.nebulaBreath*0.5) + this.chordFlash*n._pulse*0.4);
+    });
+
+    this.drawTwinkleStars(this.elapsed);
+    this.updateShootingStars(delta);  // real delta — not speed-scaled
+
+    // Alignment glow
+    this.alignG.clear();
+    if (this.alignIntensity > 0.04) {
+      const gR = 40 + this.alignIntensity*90 + this.chordFlash*50;
+      this.alignG.fillStyle(0xFFCC44, this.alignIntensity*0.20+this.chordFlash*0.12);
+      this.alignG.fillCircle(CX, CY, gR);
+      this.alignG.fillStyle(0xFF8800, this.alignIntensity*0.07+this.chordFlash*0.05);
+      this.alignG.fillCircle(CX, CY, gR*1.9);
+    }
+
+    this.drawStar(this.alignIntensity, this.starClickFlash);
+    this.drawSpiral(this.spiralFlash);
+
+    this.trailG.clear();
+    this.drawTrail(this.trails.inner,  C_INNER);
+    this.drawTrail(this.trails.middle, C_MIDDLE);
+    this.drawTrail(this.trails.outer,  C_OUTER);
+
+    this.bodyG.inner.x  = pos.inner.x;  this.bodyG.inner.y  = pos.inner.y;
+    this.bodyG.middle.x = pos.middle.x; this.bodyG.middle.y = pos.middle.y;
+    this.bodyG.outer.x  = pos.outer.x;  this.bodyG.outer.y  = pos.outer.y;
+
+    this.updatePulses(delta);
+    this.updateRhythmDisplay();
+  }
+}
+
+// ─── Boot ──────────────────────────────────────────────────────────────────
+
+window.spheresGame = new Phaser.Game({
+  type: Phaser.AUTO,
+  width:  window.innerWidth,
+  height: window.innerHeight,
+  backgroundColor: '#000008',
+  scene: Spheres,
+  scale: { mode: Phaser.Scale.RESIZE, autoCenter: Phaser.Scale.CENTER_BOTH },
+});
+
+// ─── Title card ────────────────────────────────────────────────────────────
+
+document.getElementById('title-card').addEventListener('pointerdown', () => {
+  document.getElementById('title-card').classList.add('fade-out');
+  audioReady = true;
+  getCtx().resume();
+  document.getElementById('controls').classList.add('visible');
+  setTimeout(() => { document.getElementById('title-card').style.display='none'; }, 1500);
+}, { once: true });
+
+// ─── Controls ──────────────────────────────────────────────────────────────
+
+document.getElementById('vol-slider').addEventListener('input', e => {
+  volumeMax = e.target.value/100;
+  document.getElementById('vol-val').textContent = e.target.value+'%';
+});
+document.getElementById('tempo-slider').addEventListener('input', e => {
+  speedMult = e.target.value/100;
+  document.getElementById('tempo-val').textContent = speedMult.toFixed(2)+'×';
+});
+document.querySelectorAll('[data-res]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('[data-res]').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const p = RESONANCE_PRESETS[btn.dataset.res];
+    document.getElementById('res-val').textContent = p.label;
+    if (window.applyResonance) window.applyResonance(p);
+  });
+});
+const waveLabels = { sine:'pure', triangle:'warm', sawtooth:'bright' };
+document.querySelectorAll('[data-wave]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('[data-wave]').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    waveType = btn.dataset.wave;
+    document.getElementById('wave-val').textContent = waveLabels[waveType];
+  });
+});
+document.getElementById('trail-slider').addEventListener('input', e => {
+  trailLen = parseInt(e.target.value);
+  document.getElementById('trail-val').textContent = trailLen<25?'short':trailLen<70?'med':'long';
+});
+document.querySelectorAll('[data-retro]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const key = btn.dataset.retro;
+    retrograde[key] = !retrograde[key];
+    btn.classList.toggle('active', retrograde[key]);
+    if (window.refreshRetrograde) window.refreshRetrograde();
+  });
+});
+
+</script>
+</body>
+</html>
