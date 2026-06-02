@@ -1,0 +1,727 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>abyss</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000306; display: flex; align-items: center; justify-content: center; height: 100vh; overflow: hidden; }
+    #hint { position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%);
+      color: #0a1520; font-size: 11px; font-family: monospace; letter-spacing: 0.14em; pointer-events: none; }
+  </style>
+</head>
+<body>
+<div id="game"></div>
+<div id="hint">move to herd · click to scatter · keep the light alive</div>
+
+<script src="https://cdn.jsdelivr.net/npm/phaser@3.88.2/dist/phaser.min.js"></script>
+<script>
+'use strict';
+
+// ─── Palette ──────────────────────────────────────────────────────────────────
+const PAL = {
+  tiny:   [ {r:0,g:255,b:200}, {r:120,g:255,b:210}, {r:60,g:220,b:255}, {r:0,g:200,b:255} ],
+  medium: [ {r:30,g:180,b:255}, {r:0,g:255,b:130}, {r:140,g:80,b:255}, {r:0,g:255,b:200} ],
+  large:  [ {r:80,g:60,b:255}, {r:0,g:140,b:255}, {r:60,g:0,b:200} ],
+  angler: { r:180, g:30, b:0 },
+  lure:   { r:0, g:220, b:180 },
+};
+
+function toHex(c) { return Phaser.Display.Color.GetColor(c.r, c.g, c.b); }
+function lerp(a, b, t) { return a + (b - a) * t; }
+function dist2(ax, ay, bx, by) { return (ax-bx)**2 + (ay-by)**2; }
+
+// ─── Drifter ──────────────────────────────────────────────────────────────────
+class Drifter {
+  constructor(x, y, tier) {
+    // tier: 'tiny' | 'medium' | 'large'
+    this.tier = tier;
+    this.x = x; this.y = y;
+    this.vx = (Math.random()-0.5)*30; this.vy = (Math.random()-0.5)*30;
+
+    const cfg = {
+      tiny:   { size: Phaser.Math.Between(4,6),  speed: 90, phaseSpd: 0.028 + Math.random()*0.010, tailLen: 7  },
+      medium: { size: Phaser.Math.Between(8,12), speed: 60, phaseSpd: 0.016 + Math.random()*0.008, tailLen: 10 },
+      large:  { size: Phaser.Math.Between(14,18),speed: 38, phaseSpd: 0.008 + Math.random()*0.004, tailLen: 13 },
+    }[tier];
+
+    this.baseSize   = cfg.size;
+    this.size       = cfg.size;
+    this.maxSpeed   = cfg.speed;
+    this.phaseSpeed = cfg.phaseSpd;
+    this.tailLen    = cfg.tailLen;
+    this.phase      = Math.random() * Math.PI * 2;
+    this.color      = PAL[tier][Math.floor(Math.random()*PAL[tier].length)];
+
+    this.tail = Array.from({length: this.tailLen}, () => ({x, y}));
+    // Front of tail follows fast. Tip follows slow. — secondary motion
+    this.lagF = Array.from({length: this.tailLen}, (_,i) => 0.40 - i * (0.28 / this.tailLen));
+
+    this.captured      = false;
+    this.captureTimer  = 0;
+    this.alpha         = 1;
+    this.wanderAngle   = Math.random() * Math.PI * 2;
+    this.wanderTimer   = 0;
+    this.scared        = false;
+    this.scareTimer    = 0;
+  }
+
+  update(delta, ptrX, ptrY, trail, flockmates, W, H) {
+    if (this.captured) {
+      this.alpha = Math.max(0, this.alpha - delta * 0.0008);
+      return;
+    }
+    const dt = delta / 1000;
+    this.phase += this.phaseSpeed;
+
+    if (this.scared) { this.scareTimer -= delta; if (this.scareTimer<=0) this.scared=false; }
+
+    // ── Boids ────────────────────────────────────────────────────────────
+    let sepX=0, sepY=0, cohX=0, cohY=0, aliX=0, aliY=0;
+    let sepN=0, cohN=0, aliN=0;
+    const SEP_R=32, COH_R=120, ALI_R=80;
+
+    for (const f of flockmates) {
+      if (f===this || f.captured) continue;
+      const dx=f.x-this.x, dy=f.y-this.y;
+      const d2=dx*dx+dy*dy;
+      if (d2 < SEP_R*SEP_R && d2>0) { const d=Math.sqrt(d2); sepX-=dx/d; sepY-=dy/d; sepN++; }
+      if (d2 < COH_R*COH_R) { cohX+=f.x; cohY+=f.y; cohN++; }
+      if (d2 < ALI_R*ALI_R) { aliX+=f.vx; aliY+=f.vy; aliN++; }
+    }
+
+    // ── Cursor trail attraction ──────────────────────────────────────────
+    let trailX=0, trailY=0, trailN=0;
+    for (const p of trail) {
+      const dx=p.x-this.x, dy=p.y-this.y, d2=dx*dx+dy*dy;
+      if (d2 < 140*140 && d2>0) { const d=Math.sqrt(d2); trailX+=dx/d; trailY+=dy/d; trailN++; }
+    }
+
+    // ── Cursor direct attraction ─────────────────────────────────────────
+    const cpx=ptrX-this.x, cpy=ptrY-this.y;
+    const cpd=Math.sqrt(cpx*cpx+cpy*cpy);
+    let cAX=0, cAY=0;
+    if (cpd > 10 && cpd < 200) { cAX=cpx/cpd; cAY=cpy/cpd; }
+
+    // ── Wander ───────────────────────────────────────────────────────────
+    this.wanderTimer -= delta;
+    if (this.wanderTimer<=0) {
+      this.wanderAngle += (Math.random()-0.5)*1.1;
+      this.wanderTimer = 600 + Math.random()*1000;
+    }
+    const wX=Math.cos(this.wanderAngle), wY=Math.sin(this.wanderAngle);
+
+    // ── Combine forces ───────────────────────────────────────────────────
+    let fX=0, fY=0;
+    if (sepN>0) { fX+=sepX/sepN*2.2; fY+=sepY/sepN*2.2; }
+    if (cohN>0) { const cx=cohX/cohN-this.x, cy=cohY/cohN-this.y;
+                  const cd=Math.sqrt(cx*cx+cy*cy)||1;
+                  fX+=cx/cd*0.7; fY+=cy/cd*0.7; }
+    if (aliN>0) { fX+=aliX/aliN*0.003; fY+=aliY/aliN*0.003; }
+    if (trailN>0) { fX+=trailX/trailN*0.8; fY+=trailY/trailN*0.8; }
+    fX+=cAX*1.4; fY+=cAY*1.4;
+    fX+=wX*0.4;  fY+=wY*0.4;
+
+    if (this.scared) {
+      const sf = this.maxSpeed*1.8;
+      fX+=Math.cos(this.wanderAngle)*sf*dt; fY+=Math.sin(this.wanderAngle)*sf*dt;
+    }
+
+    this.vx += fX * this.maxSpeed * dt;
+    this.vy += fY * this.maxSpeed * dt;
+
+    const spd=Math.sqrt(this.vx*this.vx+this.vy*this.vy);
+    if (spd > this.maxSpeed) { this.vx=this.vx/spd*this.maxSpeed; this.vy=this.vy/spd*this.maxSpeed; }
+    this.vx*=0.95; this.vy*=0.95;
+    this.x+=this.vx*dt; this.y+=this.vy*dt;
+
+    // Soft walls
+    const mg=50;
+    if (this.x<mg)     this.vx+=(mg-this.x)*5*dt;
+    if (this.x>W-mg)   this.vx-=(this.x-(W-mg))*5*dt;
+    if (this.y<mg)     this.vy+=(mg-this.y)*5*dt;
+    if (this.y>H-mg)   this.vy-=(this.y-(H-mg))*5*dt;
+
+    // Secondary motion chain — the tail knows nothing about the head directly.
+    // Each segment only sees its neighbor. The S-curve emerges from turning.
+    this.tail[0].x += (this.x-this.tail[0].x)*this.lagF[0];
+    this.tail[0].y += (this.y-this.tail[0].y)*this.lagF[0];
+    for (let i=1;i<this.tailLen;i++) {
+      this.tail[i].x += (this.tail[i-1].x-this.tail[i].x)*this.lagF[i];
+      this.tail[i].y += (this.tail[i-1].y-this.tail[i].y)*this.lagF[i];
+    }
+
+    const glow=(Math.sin(this.phase)+1)/2;
+    this.size = this.baseSize*(0.86+glow*0.28);
+  }
+
+  entrain(other, strength) {
+    let diff=other.phase-this.phase;
+    while(diff> Math.PI) diff-=Math.PI*2;
+    while(diff<-Math.PI) diff+=Math.PI*2;
+    this.phase+=diff*strength;
+  }
+
+  scare() {
+    this.scared=true; this.scareTimer=900+Math.random()*600;
+    this.wanderAngle=Math.atan2(this.vy,this.vx)+Math.PI+(Math.random()-0.5)*0.8;
+  }
+
+  draw(g, dangerAlpha) {
+    if (this.alpha <= 0) return;
+    const glow = (Math.sin(this.phase)+1)/2;
+    const alpha = this.alpha * (0.35+glow*0.65);
+    const c = this.color;
+    const pColor = toHex(c);
+
+    // Danger warning — reddish tint when angler near
+    const warnR = Math.min(255, c.r + dangerAlpha*180);
+    const warnG = Math.max(0,   c.g - dangerAlpha*80);
+    const warnB = Math.max(0,   c.b - dangerAlpha*60);
+    const wColor = Phaser.Display.Color.GetColor(warnR, warnG, warnB);
+    const drawColor = dangerAlpha>0 ? wColor : pColor;
+
+    // Tail — tip to head
+    for (let i=this.tailLen-1;i>=0;i--) {
+      const seg=this.tail[i];
+      const t=1-i/(this.tailLen-1);
+      g.fillStyle(drawColor, alpha*t*0.72);
+      g.fillEllipse(seg.x,seg.y, this.size*t*1.1, this.size*t*0.42);
+    }
+
+    // Glow halos
+    g.fillStyle(drawColor, alpha*0.05); g.fillCircle(this.x,this.y,this.size*3.8);
+    g.fillStyle(drawColor, alpha*0.12); g.fillCircle(this.x,this.y,this.size*2.1);
+    g.fillStyle(drawColor, alpha*0.48); g.fillCircle(this.x,this.y,this.size*1.0);
+    g.fillStyle(0xffffff,   alpha*0.65); g.fillCircle(this.x,this.y,this.size*0.28);
+
+    // Eye
+    const spd=Math.sqrt(this.vx**2+this.vy**2);
+    if (spd>2) {
+      const ex=this.x+(this.vx/spd)*this.size*0.55;
+      const ey=this.y+(this.vy/spd)*this.size*0.18;
+      g.fillStyle(0x001020,1); g.fillCircle(ex,ey,1.6);
+      g.fillStyle(0xffffff,0.9); g.fillCircle(ex+0.4,ey-0.4,0.55);
+    }
+  }
+}
+
+// ─── Angler ───────────────────────────────────────────────────────────────────
+class Angler {
+  constructor(x, y) {
+    this.x=x; this.y=y;
+    this.vx=(Math.random()-0.5)*10; this.vy=(Math.random()-0.5)*10;
+    this.baseSize = 22;
+    this.size     = 22;
+    this.maxSpeed = 28;
+    this.tailLen  = 15;
+    this.phase    = Math.random()*Math.PI*2;
+    this.phaseSpeed=0.009;
+
+    // Tail with very heavy lag — this weight is the menace
+    this.tail = Array.from({length:this.tailLen}, () => ({x,y}));
+    this.lagF = Array.from({length:this.tailLen}, (_,i)=>0.22-i*(0.16/this.tailLen));
+
+    this.target       = null;
+    this.repelled     = false;
+    this.repelTimer   = 0;
+    this.repelVX      = 0;
+    this.repelVY      = 0;
+    this.lureExtend   = 0;    // 0-1
+    this.lurePhase    = 0;
+    this.emerged      = false;
+    this.alpha        = 0;    // fades in on spawn
+  }
+
+  update(delta, drifters, W, H) {
+    const dt=delta/1000;
+    this.phase     += this.phaseSpeed;
+    this.lurePhase += 0.04;
+    this.alpha = Math.min(1, this.alpha+delta*0.0004);
+
+    // ── Repulsion from sync pulse ────────────────────────────────────────
+    if (this.repelled) {
+      this.repelTimer-=delta;
+      this.vx += this.repelVX*dt*6;
+      this.vy += this.repelVY*dt*6;
+      if (this.repelTimer<=0) this.repelled=false;
+    }
+
+    // ── Hunt nearest isolated drifter ───────────────────────────────────
+    // "Isolated" = far from the flock centroid (the most vulnerable one)
+    let target=null; let bestScore=-Infinity;
+    const alive=drifters.filter(d=>!d.captured);
+
+    if (alive.length>0) {
+      const cx=alive.reduce((s,d)=>s+d.x,0)/alive.length;
+      const cy=alive.reduce((s,d)=>s+d.y,0)/alive.length;
+
+      for (const d of alive) {
+        const isolation=Math.sqrt((d.x-cx)**2+(d.y-cy)**2);
+        const proximity=400-Math.sqrt((d.x-this.x)**2+(d.y-this.y)**2);
+        const score=isolation*0.7+proximity*0.3;
+        if (score>bestScore) { bestScore=score; target=d; }
+      }
+    }
+    this.target=target;
+
+    if (target && !this.repelled) {
+      const dx=target.x-this.x, dy=target.y-this.y;
+      const d=Math.sqrt(dx*dx+dy*dy)||1;
+      this.vx+=(dx/d)*this.maxSpeed*dt*1.4;
+      this.vy+=(dy/d)*this.maxSpeed*dt*1.4;
+      this.lureExtend=Math.min(1,this.lureExtend+dt*0.8);
+    } else {
+      this.lureExtend=Math.max(0,this.lureExtend-dt*1.2);
+    }
+
+    // Speed limit + drag
+    const spd=Math.sqrt(this.vx**2+this.vy**2);
+    if (spd>this.maxSpeed) { this.vx=this.vx/spd*this.maxSpeed; this.vy=this.vy/spd*this.maxSpeed; }
+    this.vx*=0.92; this.vy*=0.92;
+    this.x+=this.vx*dt; this.y+=this.vy*dt;
+
+    // Soft walls
+    const mg=40;
+    if (this.x<mg) this.vx+=(mg-this.x)*4*dt;
+    if (this.x>W-mg) this.vx-=(this.x-(W-mg))*4*dt;
+    if (this.y<mg) this.vy+=(mg-this.y)*4*dt;
+    if (this.y>H-mg) this.vy-=(this.y-(H-mg))*4*dt;
+
+    // Secondary motion — 15 segments, heavy lag.
+    // The Angler's body trails behind like something very large turning slowly.
+    this.tail[0].x+=(this.x-this.tail[0].x)*this.lagF[0];
+    this.tail[0].y+=(this.y-this.tail[0].y)*this.lagF[0];
+    for (let i=1;i<this.tailLen;i++) {
+      this.tail[i].x+=(this.tail[i-1].x-this.tail[i].x)*this.lagF[i];
+      this.tail[i].y+=(this.tail[i-1].y-this.tail[i].y)*this.lagF[i];
+    }
+
+    const glow=(Math.sin(this.phase)+1)/2;
+    this.size=this.baseSize*(0.9+glow*0.15);
+  }
+
+  repel(fromX, fromY) {
+    const dx=this.x-fromX, dy=this.y-fromY;
+    const d=Math.sqrt(dx*dx+dy*dy)||1;
+    this.repelVX=dx/d*this.maxSpeed*2.5;
+    this.repelVY=dy/d*this.maxSpeed*2.5;
+    this.repelled=true; this.repelTimer=2200;
+    this.lureExtend=0;
+  }
+
+  // Returns lure world position
+  getLurePos() {
+    const spd=Math.sqrt(this.vx**2+this.vy**2)||1;
+    const nx=this.vx/spd, ny=this.vy/spd;
+    const ext=this.lureExtend*(this.size*4.5+Math.sin(this.lurePhase)*6);
+    return { x: this.x+nx*ext, y: this.y+ny*ext };
+  }
+
+  draw(g) {
+    if (this.alpha<=0) return;
+    const glow=(Math.sin(this.phase)+1)/2;
+    const alpha=this.alpha*(0.25+glow*0.2);
+    const c=PAL.angler;
+    const pColor=toHex(c);
+
+    // Tail — tip to head, heavy and slow
+    for (let i=this.tailLen-1;i>=0;i--) {
+      const seg=this.tail[i];
+      const t=1-i/(this.tailLen-1);
+      const w=this.size*t*1.4, h=this.size*t*0.5;
+      g.fillStyle(pColor, alpha*t*0.65);
+      g.fillEllipse(seg.x,seg.y,w,h);
+    }
+
+    // Body — dark, massive
+    g.fillStyle(toHex({r:80,g:15,b:0}), alpha*0.15);  g.fillCircle(this.x,this.y,this.size*3.2);
+    g.fillStyle(toHex({r:120,g:20,b:0}),alpha*0.3);   g.fillCircle(this.x,this.y,this.size*1.8);
+    g.fillStyle(pColor,                  alpha*0.55);  g.fillCircle(this.x,this.y,this.size*1.0);
+    g.fillStyle(0xffffff,                alpha*0.3);   g.fillCircle(this.x,this.y,this.size*0.2);
+
+    // Eyes — two of them, wide set. Anglers have binocular vision.
+    const spd=Math.sqrt(this.vx**2+this.vy**2)||1;
+    const fx=this.vx/spd, fy=this.vy/spd;
+    const rx=-fy, ry=fx;  // perpendicular
+    const ef=this.size*0.55;
+    const es=this.size*0.2;
+    [-1,1].forEach(side => {
+      const ex=this.x+fx*ef+rx*side*this.size*0.5;
+      const ey=this.y+fy*ef+ry*side*this.size*0.5;
+      g.fillStyle(0xff0000,  alpha*0.9); g.fillCircle(ex,ey,es+0.5);
+      g.fillStyle(0xff6600,  alpha*0.7); g.fillCircle(ex,ey,es*0.5);
+    });
+
+    // Lure — the deceptive light — looks like a small Drifter
+    if (this.lureExtend>0.05) {
+      const lp=this.getLurePos();
+      const lGlow=(Math.sin(this.lurePhase*3)+1)/2;
+      const lAlpha=this.alpha*this.lureExtend*(0.4+lGlow*0.6);
+      const lc=PAL.lure;
+      const lColor=toHex(lc);
+      g.fillStyle(lColor, lAlpha*0.08); g.fillCircle(lp.x,lp.y,14);
+      g.fillStyle(lColor, lAlpha*0.25); g.fillCircle(lp.x,lp.y,7);
+      g.fillStyle(lColor, lAlpha*0.7);  g.fillCircle(lp.x,lp.y,3);
+      g.fillStyle(0xffffff,lAlpha*0.9); g.fillCircle(lp.x,lp.y,1.2);
+
+      // Filament connecting lure to body — thin line
+      g.lineStyle(0.8, lColor, lAlpha*0.3);
+      g.beginPath();
+      g.moveTo(this.x+fx*this.size, this.y+fy*this.size);
+      g.lineTo(lp.x, lp.y);
+      g.strokePath();
+    }
+  }
+}
+
+// ─── Pulse Ring ───────────────────────────────────────────────────────────────
+class PulseRing {
+  constructor(x, y) { this.x=x; this.y=y; this.r=0; this.alpha=0.9; this.dead=false; }
+  update(delta) {
+    this.r     += delta*0.38;
+    this.alpha -= delta*0.00065;
+    if (this.alpha<=0) this.dead=true;
+  }
+  draw(g) {
+    if (this.dead) return;
+    g.lineStyle(2, 0x00ffcc, this.alpha*0.6);
+    g.strokeCircle(this.x, this.y, this.r);
+    g.lineStyle(0.5, 0xffffff, this.alpha*0.3);
+    g.strokeCircle(this.x, this.y, this.r*0.85);
+  }
+}
+
+// ─── Scene ────────────────────────────────────────────────────────────────────
+class Abyss extends Phaser.Scene {
+  preload() {
+    const g=this.make.graphics({add:false});
+    g.fillStyle(0xffffff).fillCircle(4,4,4);
+    g.generateTexture('dot',8,8);
+    g.destroy();
+  }
+
+  create() {
+    const W=this.scale.width, H=this.scale.height;
+    this.W=W; this.H=H; this.t0=this.time.now;
+
+    // ── Drifters — three size tiers = polyrhythm ──────────────────────────
+    // Tiny: hi-hat speed blinkers. Medium: the voice. Large: bass beat.
+    this.drifters = [
+      ...Array.from({length:4}, () => new Drifter(100+Math.random()*(W-200), 80+Math.random()*(H-200), 'tiny')),
+      ...Array.from({length:5}, () => new Drifter(100+Math.random()*(W-200), 80+Math.random()*(H-200), 'medium')),
+      ...Array.from({length:3}, () => new Drifter(100+Math.random()*(W-200), 80+Math.random()*(H-200), 'large')),
+    ];
+
+    // ── Anglers — start with one, more rise from the depths ───────────────
+    this.anglers    = [];
+    this.pulseRings = [];
+    this.trail      = [];  // cursor trail: {x,y,t}
+
+    // First angler spawns from bottom after 8 seconds
+    this.time.delayedCall(8000, () => this.spawnAngler());
+
+    // More anglers every 45 seconds after that
+    this.anglerSpawnTimer = this.time.addEvent({
+      delay: 45000, loop: true, startAt: 45000,
+      callback: () => { if (this.anglers.length<4) this.spawnAngler(); }
+    });
+
+    // ── Game state ────────────────────────────────────────────────────────
+    this.pulseCount   = 0;
+    this.syncLevel    = 0;       // 0–1 continuous
+    this.pulseCooldown= 0;
+    this.gameOver     = false;
+    this.survived     = 0;
+
+    // ── Graphics ──────────────────────────────────────────────────────────
+    this.bgGfx     = this.add.graphics().setDepth(0);
+    this.gfx       = this.add.graphics().setDepth(10);
+    this.uiGfx     = this.add.graphics().setDepth(30);
+    this.drawBackground();
+
+    // ── Plankton ──────────────────────────────────────────────────────────
+    this.add.particles(0,0,'dot',{
+      x:{min:0,max:W}, y:{min:0,max:H},
+      lifespan:{min:5000,max:10000}, speed:{min:1,max:4},
+      angle:{min:0,max:360}, scale:{start:0.07,end:0.03},
+      alpha:{start:0,end:0.15}, tint:[0x002244,0x003355],
+      quantity:1, frequency:250, blendMode:'ADD'
+    }).setDepth(1);
+
+    // ── UI Text ───────────────────────────────────────────────────────────
+    this.pulseLabel  = this.add.text(W-16,16,'',{
+      fontSize:'12px',color:'#001830',fontFamily:'monospace',align:'right'
+    }).setOrigin(1,0).setDepth(31);
+
+    this.countLabel  = this.add.text(W/2,16,'',{
+      fontSize:'11px',color:'#001020',fontFamily:'monospace',align:'center'
+    }).setOrigin(0.5,0).setDepth(31);
+
+    this.depthLabel  = this.add.text(16,16,'depth: 847m',{
+      fontSize:'10px',color:'#060e18',fontFamily:'monospace'
+    }).setDepth(31);
+
+    this.flashText   = this.add.text(W/2,H/2,'',{
+      fontSize:'22px',color:'#00ffcc',fontFamily:'monospace',
+      stroke:'#000',strokeThickness:3,align:'center'
+    }).setOrigin(0.5).setDepth(35).setAlpha(0);
+
+    // Title
+    const titleTxt = this.add.text(W/2,H/2,'⬡  abyss',{
+      fontSize:'26px',color:'#0a2030',fontFamily:'monospace',letterSpacing:12
+    }).setOrigin(0.5).setDepth(20).setAlpha(0);
+    this.tweens.add({ targets:titleTxt, alpha:0.6, duration:1800, ease:'Quad.Out',
+      onComplete:()=>this.tweens.add({ targets:titleTxt, alpha:0, delay:2200, duration:2000 }) });
+
+    // ── Pointer ───────────────────────────────────────────────────────────
+    this.ptr     = { x:W/2, y:H/2 };
+    this.ptrDown = false;
+
+    this.input.on('pointermove', p => { this.ptr.x=p.x; this.ptr.y=p.y; });
+    this.input.on('pointerdown', p => {
+      this.ptr.x=p.x; this.ptr.y=p.y; this.ptrDown=true;
+      this.drifters.forEach(d=>{ if(!d.captured) d.scare(); });
+    });
+    this.input.on('pointerup', () => { this.ptrDown=false; });
+
+    this.cameras.main.setBackgroundColor('#000306');
+    this.cameras.main.fadeIn(2000);
+  }
+
+  drawBackground() {
+    const W=this.W, H=this.H;
+    const g=this.bgGfx;
+    g.clear();
+    // Vignette — edges darker
+    const cx=W/2, cy=H/2;
+    const steps=8;
+    for (let i=steps;i>=0;i--) {
+      const r=i/steps;
+      const alpha=0.04*(1-r);
+      g.fillStyle(0x000000,alpha);
+      g.fillEllipse(cx,cy,W*2*(1-r*0.3),H*2*(1-r*0.3));
+    }
+  }
+
+  spawnAngler() {
+    // Rise from the bottom of the screen
+    const x=80+Math.random()*(this.W-160);
+    const a=new Angler(x, this.H+60);
+    this.anglers.push(a);
+    // Emerge with a tween upward into scene
+    this.tweens.add({ targets:a, y:this.H-80, duration:4000, ease:'Quad.Out' });
+    this.showFlash('something stirs below');
+  }
+
+  showFlash(text, color='#00ffcc') {
+    this.tweens.killTweensOf(this.flashText);
+    this.flashText.setText(text).setColor(color).setAlpha(1).setScale(1);
+    this.tweens.add({ targets:this.flashText, alpha:0, delay:2200, duration:1200, ease:'Quad.In' });
+  }
+
+  firePulse(cx, cy) {
+    this.pulseCount++;
+    this.pulseCooldown=3000;
+    this.pulseRings.push(new PulseRing(cx,cy));
+    this.cameras.main.flash(500,0,40,60,true);
+    this.cameras.main.shake(200,0.003);
+
+    // Push all anglers
+    this.anglers.forEach(a=>{
+      const dx=a.x-cx, dy=a.y-cy;
+      const d=Math.sqrt(dx*dx+dy*dy);
+      if (d<400) {
+        a.repel(cx,cy);
+        this.drifters.forEach(d=>{ if(!d.captured) d.scare(); });
+      }
+    });
+
+    if (this.pulseCount===1) this.showFlash('the light pushes back');
+    else if (this.pulseCount===5) this.showFlash('five pulses. they fear you.');
+    else if (this.pulseCount===10) this.showFlash('ten. the abyss remembers.','#ffffff');
+  }
+
+  update(time, delta) {
+    if (this.gameOver) return;
+    const W=this.W, H=this.H;
+    this.survived+=delta;
+    this.pulseCooldown=Math.max(0,this.pulseCooldown-delta);
+
+    // ── Cursor trail ──────────────────────────────────────────────────────
+    this.trail.push({ x:this.ptr.x, y:this.ptr.y, t:time });
+    this.trail = this.trail.filter(p=>time-p.t<1200);
+
+    // ── Update drifters ───────────────────────────────────────────────────
+    this.drifters.forEach(d=>{
+      d.update(delta, this.ptr.x, this.ptr.y, this.trail, this.drifters, W, H);
+    });
+
+    // ── Entrainment — nearby drifters sync phases ─────────────────────────
+    const alive=this.drifters.filter(d=>!d.captured);
+    for (let i=0;i<alive.length;i++) {
+      for (let j=i+1;j<alive.length;j++) {
+        const dx=alive[i].x-alive[j].x, dy=alive[i].y-alive[j].y;
+        const d=Math.sqrt(dx*dx+dy*dy);
+        if (d<110) {
+          const str=(1-d/110)*0.0016;
+          alive[i].entrain(alive[j],str);
+          alive[j].entrain(alive[i],str);
+        }
+      }
+    }
+
+    // ── Sync level — continuous measure ──────────────────────────────────
+    // Average phase variance across all alive drifters.
+    // Low variance = high sync.
+    if (alive.length>1) {
+      const refPhase=alive[0].phase;
+      let variance=0;
+      alive.forEach(d=>{
+        let diff=d.phase-refPhase;
+        while(diff> Math.PI) diff-=Math.PI*2;
+        while(diff<-Math.PI) diff+=Math.PI*2;
+        variance+=Math.abs(diff);
+      });
+      variance/=alive.length;
+      this.syncLevel=Math.max(0,1-variance/Math.PI);
+    } else { this.syncLevel=0; }
+
+    // ── Sync pulse trigger ────────────────────────────────────────────────
+    if (this.syncLevel>0.82 && this.pulseCooldown<=0 && alive.length>=3) {
+      const cx=alive.reduce((s,d)=>s+d.x,0)/alive.length;
+      const cy=alive.reduce((s,d)=>s+d.y,0)/alive.length;
+      this.firePulse(cx,cy);
+    }
+
+    // ── Update anglers ────────────────────────────────────────────────────
+    this.anglers.forEach(a=>a.update(delta, this.drifters, W, H));
+
+    // ── Capture check — angler within strike range of a drifter ──────────
+    this.anglers.forEach(ang=>{
+      if (ang.repelled || !ang.target) return;
+      const d=ang.target;
+      if (d.captured) { ang.target=null; return; }
+      const dist=Math.sqrt((ang.x-d.x)**2+(ang.y-d.y)**2);
+      if (dist<ang.size+d.size) {
+        d.captureTimer=(d.captureTimer||0)+delta;
+        if (d.captureTimer>1200) {
+          d.captured=true;
+          ang.size=Math.min(32, ang.size*1.1);
+          ang.maxSpeed=Math.max(20, ang.maxSpeed*0.95);
+          this.cameras.main.shake(180,0.005);
+          const remaining=this.drifters.filter(x=>!x.captured).length;
+          if (remaining<=2) this.triggerGameOver();
+          else if (remaining===5) this.showFlash('fewer lights remain','#ff4400');
+        }
+      } else {
+        d.captureTimer=0;
+      }
+    });
+
+    // ── Pulse rings ───────────────────────────────────────────────────────
+    this.pulseRings.forEach(r=>r.update(delta));
+    this.pulseRings=this.pulseRings.filter(r=>!r.dead);
+
+    // ── Danger proximity — how close is any angler to any drifter ────────
+    this.drifterDanger = new Map();
+    this.drifters.forEach(d=>{
+      if (d.captured) return;
+      let closest=Infinity;
+      this.anglers.forEach(a=>{
+        if (a.repelled) return;
+        const dist=Math.sqrt((a.x-d.x)**2+(a.y-d.y)**2);
+        if (dist<closest) closest=dist;
+      });
+      this.drifterDanger.set(d, Math.max(0,1-(closest/180)));
+    });
+
+    // ── Ambient camera drift ──────────────────────────────────────────────
+    const t=(this.time.now-this.t0)*0.0001;
+    this.cameras.main.scrollX=Math.sin(t)*5;
+    this.cameras.main.scrollY=Math.cos(t*0.7)*2.5;
+
+    // ── Draw ─────────────────────────────────────────────────────────────
+    this.gfx.clear();
+
+    // Cursor trail
+    this.trail.forEach(p=>{
+      const age=(this.time.now-p.t)/1200;
+      const a=Math.pow(1-age,2)*0.4;
+      this.gfx.fillStyle(0xF59E0B,a);
+      this.gfx.fillCircle(p.x,p.y,3*(1-age));
+    });
+
+    // Pulse rings
+    this.pulseRings.forEach(r=>r.draw(this.gfx));
+
+    // Anglers (below drifters in draw order)
+    this.anglers.forEach(a=>a.draw(this.gfx));
+
+    // Drifters
+    this.drifters.forEach(d=>{
+      const danger=this.drifterDanger ? (this.drifterDanger.get(d)||0) : 0;
+      d.draw(this.gfx, danger);
+    });
+
+    // ── Pulse meter — left edge arc ───────────────────────────────────────
+    this.uiGfx.clear();
+    const mX=28, mY=H/2, mH=160;
+    // Background track
+    this.uiGfx.lineStyle(2, 0x001830, 0.4);
+    this.uiGfx.beginPath();
+    this.uiGfx.moveTo(mX, mY-mH/2);
+    this.uiGfx.lineTo(mX, mY+mH/2);
+    this.uiGfx.strokePath();
+    // Fill
+    const fillH=mH*this.syncLevel;
+    const mColor=this.syncLevel>0.8?0x00ffcc:this.syncLevel>0.4?0x00aaff:0x004466;
+    this.uiGfx.lineStyle(3, mColor, 0.5+this.syncLevel*0.5);
+    this.uiGfx.beginPath();
+    this.uiGfx.moveTo(mX, mY+mH/2);
+    this.uiGfx.lineTo(mX, mY+mH/2-fillH);
+    this.uiGfx.strokePath();
+    // Pulse dot at top of fill
+    if (this.syncLevel>0.05) {
+      this.uiGfx.fillStyle(mColor, 0.8);
+      this.uiGfx.fillCircle(mX, mY+mH/2-fillH, 3);
+    }
+
+    // ── UI text ───────────────────────────────────────────────────────────
+    const aliveN=this.drifters.filter(d=>!d.captured).length;
+    this.pulseLabel.setText(`pulses: ${this.pulseCount}`).setColor(
+      this.pulseCount>=10?'#00ffcc':this.pulseCount>=5?'#006688':'#001830'
+    );
+    this.countLabel.setText(`lights: ${aliveN} / ${this.drifters.length}`).setColor(
+      aliveN<=4?'#441100':aliveN<=7?'#112233':'#001020'
+    );
+  }
+
+  triggerGameOver() {
+    if (this.gameOver) return;
+    this.gameOver=true;
+    this.cameras.main.fade(3000,0,0,0);
+    this.time.delayedCall(800,()=>{
+      this.showFlash(
+        `the light went out\n\npulses: ${this.pulseCount}\nsurvived: ${Math.floor(this.survived/1000)}s`,
+        '#334455'
+      );
+      this.flashText.setAlpha(1);
+      this.tweens.killTweensOf(this.flashText);
+    });
+  }
+}
+
+// ─── Boot ─────────────────────────────────────────────────────────────────────
+new Phaser.Game({
+  type: Phaser.AUTO,
+  width: 960, height: 540,
+  backgroundColor: '#000306',
+  parent: 'game',
+  physics: { default:'arcade', arcade:{ gravity:{y:0} } },
+  scene: Abyss,
+});
+</script>
+</body>
+</html>
