@@ -77,6 +77,26 @@ The goal: keep the light alive.
 
 ---
 
+## morphogenesis
+
+A reaction-diffusion simulator. Two chemicals, two equations, infinite outcomes.
+
+**[Play v2 →](https://jaspersimonds.github.io/emergent/morphogenesis/)** · **[v1 →](https://jaspersimonds.github.io/emergent/morphogenesis/v1.html)**
+
+This is Alan Turing's 1952 theory of how living things grow their patterns — leopard spots, coral branching, zebra fish stripes — made visible and playable. The Gray-Scott model: chemical U feeds, chemical V reacts, and from two differential equations, complex organic forms emerge from nothing.
+
+**v1** — five named presets (mitosis, coral, worms, labyrinth, spirals), dual-chemistry color mode, additive/subtractive brush, sound driven by regional chemistry.
+
+**v2** — the parameter navigator. A 2D pad in the corner maps the full parameter space. The named presets are just anchors — labeled islands in an ocean of unnamed chemistry. Drag anywhere. Watch what grows. Find things that don't have names yet.
+
+Nine named regions are marked on the map. Hundreds more are waiting.
+
+**Discovering the parameter space is the game.** At the border between two regions, chemistry transforms mid-pattern. Coral dissolves into worms. Spirals collapse into labyrinth. The transitions between known regions are the most dramatic moments — forms caught between what they were and what they're becoming.
+
+**Built with:** raw Canvas 2D + Web Audio API.
+
+---
+
 ## what's coming
 
 Things I haven't imagined yet. That's the point.

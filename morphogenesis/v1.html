@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>morphogenesis</title>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    html, body { width:100%; height:100%; background:#000; overflow:hidden; user-select:none; font-family:'Georgia',serif; }
+
+    #canvas {
+      position:fixed; inset:0;
+      width:100%; height:100%;
+      image-rendering: auto;
+      cursor: crosshair;
+    }
+
+    #title-card {
+      position:fixed; inset:0;
+      display:flex; flex-direction:column; align-items:center; justify-content:center;
+      background:#000008; z-index:20; transition:opacity 1.6s ease; cursor:pointer;
+    }
+    #title-card h1    { color:#EEF0F8; font-size:28px; font-weight:300; letter-spacing:8px; text-transform:lowercase; margin-bottom:10px; }
+    #title-card p     { color:#404060; font-size:12px; letter-spacing:4px; margin-bottom:48px; }
+    #title-card .hint { color:#282838; font-size:10px; letter-spacing:2px; }
+    #title-card.fade-out { opacity:0; pointer-events:none; }
+
+    /* Frosted glass — see-through but readable */
+    #controls {
+      position:fixed; bottom:0; left:0; right:0;
+      display:flex; flex-wrap:wrap; align-items:center; justify-content:center;
+      gap:12px 22px; padding:10px 20px 13px;
+      background: rgba(0, 0, 12, 0.72);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border-top: 1px solid rgba(255,255,255,0.05);
+      z-index:10; opacity:0; transition:opacity 2s ease;
+    }
+    #controls.visible { opacity:1; }
+
+    .ctrl-group { display:flex; align-items:center; gap:7px; }
+    .ctrl-label { font-family:monospace; font-size:8px; letter-spacing:2px; color:#5A5A7E; text-transform:uppercase; white-space:nowrap; }
+    .ctrl-value { font-family:monospace; font-size:9px; color:#6A6A90; min-width:28px; }
+    .sep        { width:1px; height:22px; background:rgba(255,255,255,0.07); }
+
+    input[type=range] { -webkit-appearance:none; width:80px; height:2px; background:#222240; outline:none; border-radius:1px; }
+    input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:9px; height:9px; border-radius:50%; background:#5555AA; cursor:pointer; transition:background .2s; }
+    input[type=range]::-webkit-slider-thumb:hover { background:#8888CC; }
+
+    .btn-row { display:flex; gap:3px; }
+    .pill {
+      font-family:monospace; font-size:8px; letter-spacing:1px;
+      color:#4A4A6E; background:rgba(6,6,20,0.6);
+      border:1px solid rgba(80,80,160,0.25);
+      border-radius:10px; padding:3px 9px; cursor:pointer; white-space:nowrap;
+      transition:color .2s, border-color .2s, background .2s;
+    }
+    .pill:hover  { color:#8888CC; border-color:rgba(100,100,200,0.5); }
+    .pill.active { color:#AAAAEE; border-color:rgba(100,100,220,0.7); background:rgba(20,20,60,0.8); }
+
+    #info {
+      position:fixed; top:20px; left:50%; transform:translateX(-50%);
+      font-family:monospace; font-size:9px; letter-spacing:3px;
+      color:#1E1E30; text-transform:uppercase; pointer-events:none; z-index:5;
+    }
+  </style>
+</head>
+<body>
+
+<canvas id="canvas"></canvas>
+<div id="info">morphogenesis</div>
+
+<div id="title-card">
+  <h1>morphogenesis</h1>
+  <p>two chemicals · simple rules · complex life</p>
+  <div class="hint">click to begin · paint to disturb</div>
+</div>
+
+<div id="controls">
+  <!-- PATTERN -->
+  <div class="ctrl-group">
+    <div class="ctrl-label">Pattern</div>
+    <div class="btn-row">
+      <button class="pill active" data-preset="mitosis">mitosis</button>
+      <button class="pill" data-preset="coral">coral</button>
+      <button class="pill" data-preset="worms">worms</button>
+      <button class="pill" data-preset="labyrinth">labyrinth</button>
+      <button class="pill" data-preset="spirals">spirals</button>
+    </div>
+  </div>
+  <div class="sep"></div>
+  <!-- COLOR -->
+  <div class="ctrl-group">
+    <div class="ctrl-label">Color</div>
+    <div class="btn-row">
+      <button class="pill active" data-palette="abyss">abyss</button>
+      <button class="pill" data-palette="solar">solar</button>
+      <button class="pill" data-palette="bloom">bloom</button>
+      <button class="pill" data-palette="ghost">ghost</button>
+    </div>
+    <button class="pill" id="dual-btn">dual</button>
+  </div>
+  <div class="sep"></div>
+  <!-- BRUSH -->
+  <div class="ctrl-group">
+    <div class="ctrl-label">Brush</div>
+    <div class="btn-row">
+      <button class="pill active" id="add-btn">add</button>
+      <button class="pill" id="sub-btn">erase</button>
+    </div>
+    <input type="range" id="brush-slider" min="2" max="22" value="7" step="1">
+    <div class="ctrl-value" id="brush-val">7</div>
+  </div>
+  <div class="sep"></div>
+  <!-- SPEED -->
+  <div class="ctrl-group">
+    <div class="ctrl-label">Speed</div>
+    <input type="range" id="speed-slider" min="1" max="14" value="4" step="1">
+    <div class="ctrl-value" id="speed-val">4</div>
+  </div>
+  <div class="sep"></div>
+  <!-- VOLUME -->
+  <div class="ctrl-group">
+    <div class="ctrl-label">Volume</div>
+    <input type="range" id="vol-slider" min="0" max="100" value="65" step="5">
+    <div class="ctrl-value" id="vol-val">65%</div>
+    <button class="pill active" id="sound-btn">on</button>
+  </div>
+</div>
+
+<script>
+
+// ─── Grid ──────────────────────────────────────────────────────────────────
+
+const GS = 256;
+const N  = GS * GS;
+const DU = 0.2097;
+const DV = 0.1050;
+const DT = 1.0;
+
+let f = 0.028, k = 0.062;
+
+const PRESETS = {
+  mitosis:   { f:0.028,  k:0.062, seed:'scatter' },  // spots that divide
+  coral:     { f:0.0545, k:0.062, seed:'scatter' },  // branching growth
+  worms:     { f:0.022,  k:0.059, seed:'scatter' },  // writhing waves
+  labyrinth: { f:0.035,  k:0.060, seed:'scatter' },  // maze stripes
+  spirals:   { f:0.014,  k:0.047, seed:'spiral'  },  // rotating spirals
+};
+
+const U  = new Float32Array(N).fill(1);
+const V  = new Float32Array(N).fill(0);
+const nU = new Float32Array(N);
+const nV = new Float32Array(N);
+
+// Precomputed toroidal index tables
+const PREV = new Int32Array(GS);
+const NEXT = new Int32Array(GS);
+for (let i = 0; i < GS; i++) {
+  PREV[i] = (i - 1 + GS) % GS;
+  NEXT[i] = (i + 1) % GS;
+}
+
+// ─── Color ─────────────────────────────────────────────────────────────────
+
+function buildLUT(stops) {
+  const lut = new Uint8Array(256 * 3);
+  for (let i = 0; i < 256; i++) {
+    const t = i / 255;
+    let s0 = stops[0], s1 = stops[stops.length - 1];
+    for (let j = 0; j < stops.length - 1; j++) {
+      if (t >= stops[j].t && t <= stops[j+1].t) { s0=stops[j]; s1=stops[j+1]; break; }
+    }
+    const span = s1.t - s0.t;
+    const frac = span < 0.0001 ? 0 : (t - s0.t) / span;
+    lut[i*3]   = Math.round(s0.r + (s1.r - s0.r) * frac);
+    lut[i*3+1] = Math.round(s0.g + (s1.g - s0.g) * frac);
+    lut[i*3+2] = Math.round(s0.b + (s1.b - s0.b) * frac);
+  }
+  return lut;
+}
+
+const PALETTES = {
+  abyss: buildLUT([
+    {t:0.00, r:2,  g:4,  b:14 }, {t:0.25, r:0,  g:30, b:65 },
+    {t:0.55, r:0,  g:110,b:140}, {t:0.80, r:10, g:210,b:190},
+    {t:1.00, r:180,g:255,b:250},
+  ]),
+  solar: buildLUT([
+    {t:0.00, r:4,  g:2,  b:8  }, {t:0.30, r:70, g:15, b:0  },
+    {t:0.60, r:200,g:70, b:0  }, {t:0.82, r:255,g:185,b:30 },
+    {t:1.00, r:255,g:250,b:210},
+  ]),
+  bloom: buildLUT([
+    {t:0.00, r:4,  g:2,  b:12 }, {t:0.30, r:35, g:8,  b:75 },
+    {t:0.60, r:110,g:25, b:170}, {t:0.82, r:195,g:90, b:255},
+    {t:1.00, r:235,g:200,b:255},
+  ]),
+  ghost: buildLUT([
+    {t:0.00, r:3,  g:3,  b:6  }, {t:0.40, r:35, g:38, b:50 },
+    {t:0.70, r:130,g:140,b:165}, {t:1.00, r:230,g:238,b:255},
+  ]),
+};
+
+// Complementary dual palettes — show what the first chemical is doing
+const DUAL_PAIRS = {
+  abyss: buildLUT([
+    {t:0.00, r:4,  g:2,  b:8  }, {t:0.50, r:120,g:40, b:0  },
+    {t:1.00, r:220,g:140,b:40 },
+  ]),
+  solar: buildLUT([
+    {t:0.00, r:4,  g:2,  b:12 }, {t:0.50, r:60, g:10, b:120},
+    {t:1.00, r:160,g:60, b:255},
+  ]),
+  bloom: buildLUT([
+    {t:0.00, r:2,  g:4,  b:14 }, {t:0.50, r:0,  g:80, b:130},
+    {t:1.00, r:80, g:220,b:200},
+  ]),
+  ghost: null,
+};
+
+let lut         = PALETTES.abyss;
+let dualLut     = DUAL_PAIRS.abyss;
+let dualMode    = false;
+let currentPaletteKey = 'abyss';
+
+// ─── Canvas ────────────────────────────────────────────────────────────────
+
+const canvas    = document.getElementById('canvas');
+const ctx       = canvas.getContext('2d');
+canvas.width    = GS;
+canvas.height   = GS;
+const imageData = ctx.createImageData(GS, GS);
+const pixels    = imageData.data;
+
+function render() {
+  for (let i = 0; i < N; i++) {
+    const vt = Math.min(V[i] * 2.5, 1.0);
+    const li = Math.floor(vt * 255) * 3;
+    const p  = i * 4;
+
+    if (dualMode && dualLut) {
+      // Show both chemicals: V through primary palette, depleted-U through dual
+      const ut   = Math.min((1 - U[i]) * 3.5, 1.0);
+      const li2  = Math.floor(ut * 255) * 3;
+      const blend = 0.45;
+      pixels[p]   = Math.min(255, lut[li]   + dualLut[li2]   * blend);
+      pixels[p+1] = Math.min(255, lut[li+1] + dualLut[li2+1] * blend);
+      pixels[p+2] = Math.min(255, lut[li+2] + dualLut[li2+2] * blend);
+    } else {
+      pixels[p]   = lut[li];
+      pixels[p+1] = lut[li+1];
+      pixels[p+2] = lut[li+2];
+    }
+    pixels[p+3] = 255;
+  }
+  ctx.putImageData(imageData, 0, 0);
+}
+
+// ─── Simulation ────────────────────────────────────────────────────────────
+
+function step() {
+  for (let y = 0; y < GS; y++) {
+    const row  = y  * GS;
+    const rowP = PREV[y] * GS;
+    const rowN = NEXT[y] * GS;
+    for (let x = 0; x < GS; x++) {
+      const xP = PREV[x], xN = NEXT[x];
+      const idx = row + x;
+      const u = U[idx], v = V[idx];
+      const uvv = u * v * v;
+
+      const lu = 0.05*(U[rowP+xP]+U[rowP+xN]+U[rowN+xP]+U[rowN+xN])
+               + 0.20*(U[rowP+x] +U[rowN+x] +U[row+xP] +U[row+xN]) - u;
+      const lv = 0.05*(V[rowP+xP]+V[rowP+xN]+V[rowN+xP]+V[rowN+xN])
+               + 0.20*(V[rowP+x] +V[rowN+x] +V[row+xP] +V[row+xN]) - v;
+
+      let nu = u + DT*(DU*lu - uvv + f*(1-u));
+      let nv = v + DT*(DV*lv + uvv - (f+k)*v);
+
+      nU[idx] = nu < 0 ? 0 : nu > 1 ? 1 : nu;
+      nV[idx] = nv < 0 ? 0 : nv > 1 ? 1 : nv;
+    }
+  }
+  U.set(nU); V.set(nV);
+}
+
+// ─── Seeding ───────────────────────────────────────────────────────────────
+
+function seedBlock(cx, cy, r, noise) {
+  for (let dy = -r; dy <= r; dy++) {
+    for (let dx = -r; dx <= r; dx++) {
+      if (dx*dx + dy*dy > r*r) continue;
+      const gx = ((cx+dx)%GS+GS)%GS;
+      const gy = ((cy+dy)%GS+GS)%GS;
+      const idx = gy*GS + gx;
+      U[idx] = 0.50 + (Math.random()-0.5)*(noise||0.05);
+      V[idx] = 0.25 + (Math.random()-0.5)*(noise||0.05);
+    }
+  }
+}
+
+function reset(seedType) {
+  U.fill(1); V.fill(0);
+  if (seedType === 'spiral') {
+    // Diagonal line seeds + asymmetric pair — creates conditions for spiral formation
+    for (let i = 0; i < GS; i += 14) {
+      seedBlock(i, Math.floor(i * 0.8 + GS*0.1), 3, 0.08);
+    }
+    seedBlock(GS*0.35, GS*0.45, 5, 0.06);
+    seedBlock(GS*0.65, GS*0.55, 5, 0.06);
+  } else {
+    // Scatter seeds across grid
+    for (let i = 0; i < 20; i++) {
+      seedBlock(
+        20 + Math.floor(Math.random()*(GS-40)),
+        20 + Math.floor(Math.random()*(GS-40)),
+        3 + Math.floor(Math.random()*4), 0.06
+      );
+    }
+  }
+  totalSteps = 0;
+}
+
+// ─── Painting ─────────────────────────────────────────────────────────────
+
+let painting     = false;
+let brushMode    = 'add';   // 'add' or 'sub'
+let brushSize    = 7;
+let paintGX = 0, paintGY = 0;
+
+function canvasToGrid(cx, cy) {
+  const r = canvas.getBoundingClientRect();
+  return {
+    gx: Math.floor((cx-r.left)/r.width  * GS),
+    gy: Math.floor((cy-r.top) /r.height * GS),
+  };
+}
+
+function paintAt(gx, gy) {
+  for (let dy = -brushSize; dy <= brushSize; dy++) {
+    for (let dx = -brushSize; dx <= brushSize; dx++) {
+      if (dx*dx + dy*dy > brushSize*brushSize) continue;
+      const px = ((gx+dx)%GS+GS)%GS;
+      const py = ((gy+dy)%GS+GS)%GS;
+      const idx = py*GS + px;
+      if (brushMode === 'add') {
+        U[idx] = 0.50 + (Math.random()-0.5)*0.08;
+        V[idx] = 0.25 + (Math.random()-0.5)*0.08;
+      } else {
+        // Erase: reset to clean state — kills patterns
+        U[idx] = 1.0;
+        V[idx] = 0.0;
+      }
+    }
+  }
+}
+
+canvas.addEventListener('pointerdown', e => {
+  if (!started) return;
+  painting = true;
+  const g = canvasToGrid(e.clientX, e.clientY);
+  paintGX = g.gx; paintGY = g.gy;
+  paintAt(paintGX, paintGY);
+  canvas.setPointerCapture(e.pointerId);
+});
+canvas.addEventListener('pointermove', e => {
+  if (!painting) return;
+  const g = canvasToGrid(e.clientX, e.clientY);
+  paintGX = g.gx; paintGY = g.gy;
+  paintAt(paintGX, paintGY);
+});
+canvas.addEventListener('pointerup',    () => { painting = false; });
+canvas.addEventListener('pointerleave', () => { painting = false; });
+
+// ─── Sound ────────────────────────────────────────────────────────────────
+
+let audioCtx = null, masterGain = null;
+let oscs = [], gains = [];
+let soundOn    = true;
+let soundReady = false;
+let volumeLevel = 0.65;
+
+function initSound() {
+  if (audioCtx) return;
+  audioCtx   = new (window.AudioContext || window.webkitAudioContext)();
+  masterGain = audioCtx.createGain();
+  masterGain.gain.value = 0;
+  masterGain.connect(audioCtx.destination);
+
+  // Three oscillators — A2, E3, A3 — perfect fifths and octave
+  const baseFreqs = [110, 165, 220];
+  const vols      = [0.40, 0.30, 0.25];
+  baseFreqs.forEach((freq, i) => {
+    const osc = audioCtx.createOscillator();
+    const g   = audioCtx.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = freq;
+    g.gain.value = vols[i];
+    osc.connect(g); g.connect(masterGain);
+    osc.start();
+    oscs.push(osc); gains.push(g);
+  });
+  soundReady = true;
+}
+
+function sampleRegion(x0, y0, w, h) {
+  let sum = 0, count = 0;
+  for (let y = y0; y < y0+h; y += 5) {
+    for (let x = x0; x < x0+w; x += 5) {
+      sum += V[y*GS+x]; count++;
+    }
+  }
+  return count ? sum/count : 0;
+}
+
+let lastSoundUpdate = 0;
+function updateSound(ts) {
+  if (!soundReady || !audioCtx) return;
+  if (ts - lastSoundUpdate < 180) return;
+  lastSoundUpdate = ts;
+
+  const now = audioCtx.currentTime;
+  const r1 = sampleRegion(0,      0,      GS/2, GS/2);
+  const r2 = sampleRegion(GS/4,   GS/4,   GS/2, GS/2);
+  const r3 = sampleRegion(GS/2,   GS/2,   GS/2, GS/2);
+  const mean = (r1+r2+r3)/3;
+
+  // Frequencies drift based on regional chemistry
+  oscs[0].frequency.setTargetAtTime(110 + r1*180, now, 1.0);
+  oscs[1].frequency.setTargetAtTime(165 + r2*110, now, 1.0);
+  oscs[2].frequency.setTargetAtTime(220 + r3*80,  now, 1.0);
+
+  // Volume: scales with activity, capped, controlled by volumeLevel
+  const activity = Math.sqrt(Math.min(mean / 0.08, 1.0));
+  const vol = soundOn ? volumeLevel * activity * 0.18 : 0;
+  masterGain.gain.setTargetAtTime(vol, now, 0.8);
+}
+
+// ─── Loop ──────────────────────────────────────────────────────────────────
+
+let started    = false;
+let stepsFrame = 4;
+let totalSteps = 0;
+
+function loop(ts) {
+  for (let s = 0; s < stepsFrame; s++) step();
+  totalSteps += stepsFrame;
+  render();
+  updateSound(ts);
+  requestAnimationFrame(loop);
+}
+
+// ─── Boot ──────────────────────────────────────────────────────────────────
+
+reset('scatter');
+// Pre-warm so patterns are already alive on first view
+for (let i = 0; i < 300; i++) step();
+render();
+
+// ─── Title card ────────────────────────────────────────────────────────────
+
+document.getElementById('title-card').addEventListener('pointerdown', () => {
+  document.getElementById('title-card').classList.add('fade-out');
+  document.getElementById('controls').classList.add('visible');
+  initSound();
+  audioCtx.resume();
+  started = true;
+  requestAnimationFrame(loop);
+  setTimeout(() => { document.getElementById('title-card').style.display='none'; }, 1800);
+}, { once: true });
+
+// ─── Controls ──────────────────────────────────────────────────────────────
+
+// Pattern presets
+document.querySelectorAll('[data-preset]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('[data-preset]').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const p = PRESETS[btn.dataset.preset];
+    f = p.f; k = p.k;
+    reset(p.seed);
+    for (let i = 0; i < 200; i++) step();
+  });
+});
+
+// Color palettes
+document.querySelectorAll('[data-palette]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('[data-palette]').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentPaletteKey = btn.dataset.palette;
+    lut    = PALETTES[currentPaletteKey];
+    dualLut = DUAL_PAIRS[currentPaletteKey];
+  });
+});
+
+// Dual chemistry mode
+document.getElementById('dual-btn').addEventListener('click', () => {
+  dualMode = !dualMode;
+  document.getElementById('dual-btn').classList.toggle('active', dualMode);
+});
+
+// Brush mode
+document.getElementById('add-btn').addEventListener('click', () => {
+  brushMode = 'add';
+  document.getElementById('add-btn').classList.add('active');
+  document.getElementById('sub-btn').classList.remove('active');
+});
+document.getElementById('sub-btn').addEventListener('click', () => {
+  brushMode = 'sub';
+  document.getElementById('sub-btn').classList.add('active');
+  document.getElementById('add-btn').classList.remove('active');
+});
+
+// Brush size
+document.getElementById('brush-slider').addEventListener('input', e => {
+  brushSize = parseInt(e.target.value);
+  document.getElementById('brush-val').textContent = brushSize;
+});
+
+// Speed
+document.getElementById('speed-slider').addEventListener('input', e => {
+  stepsFrame = parseInt(e.target.value);
+  document.getElementById('speed-val').textContent = stepsFrame;
+});
+
+// Volume
+document.getElementById('vol-slider').addEventListener('input', e => {
+  volumeLevel = e.target.value / 100;
+  document.getElementById('vol-val').textContent = e.target.value + '%';
+});
+
+// Sound on/off
+document.getElementById('sound-btn').addEventListener('click', () => {
+  soundOn = !soundOn;
+  document.getElementById('sound-btn').classList.toggle('active', soundOn);
+  document.getElementById('sound-btn').textContent = soundOn ? 'on' : 'off';
+  if (!soundOn && masterGain) masterGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.3);
+});
+
+</script>
+</body>
+</html>
