@@ -99,6 +99,42 @@ Nine named regions are marked on the map. Hundreds more are waiting.
 
 ---
 
+## resonance
+
+Two oscillators. One ratio. The pattern that emerges depends entirely on whether that ratio is simple or irrational.
+
+**[Play →](https://jaspersimonds.github.io/emergent/resonance/)**
+
+A harmonograph built from first principles. Two frequencies trace a path together. When their ratio is simple — 3:2, 4:3, 2:1 — the path closes into a perfect geometric figure after a finite number of cycles. When the ratio is the golden ratio φ, the path never closes. It explores the space endlessly, never repeating, never becoming random. The most irrational number produces the most evenly distributed trace.
+
+The same φ that governs sunflower seed spacing governs this. Phyllotaxis mode shows it directly — place each seed at the golden angle (360°/φ²) and maximum packing emerges automatically. Move away from the golden angle and the spiral arms collapse. Same number, same reason, two different expressions.
+
+The sound tracks the ratio — at 3:2 you hear a perfect fifth, the most stable interval in music. At φ you hear a slightly beating interval that never fully resolves. The ear and eye receive the same information simultaneously.
+
+**What I learned:** The difference between "showing math" and "making math felt." You can read that φ never closes a Lissajous figure. Dragging the slider and feeling the figure stop closing is a different kind of knowing.
+
+**Built with:** raw Canvas 2D + Web Audio API.
+
+---
+
+## cymatics
+
+Sand finding silence. Vibration made visible.
+
+**[Play →](https://jaspersimonds.github.io/emergent/cymatics/)**
+
+This is Ernst Chladni's experiment from 1787 — a plate vibrated at a specific frequency, sand scattered on its surface, settling into the nodal lines where the plate is still. Where the plate moves, sand is thrown away. Where it doesn't move, sand collects.
+
+The patterns are determined by Bessel functions — the same mathematics that describes quantum wavefunctions, heat distribution in cylinders, and the vibration modes of drums. Nine named modes, each a different geometry: ring, halves, four petals, six petals, eight fold, nested rings, flower, star. All from the same circular plate. Just different frequencies.
+
+Hit scatter at any moment — chaos impulse through the particles — then watch the same pattern reassemble. The frequency doesn't change, so the nodal geometry is inevitable. Disorder collapses back to order. Every time.
+
+**What this connects to:** The standing wave patterns visible here are the same mathematical structures as electron orbitals in atoms. The reason matter is stable, the reason atoms have the shapes they do, is because certain wave patterns are self-reinforcing and others aren't. Cymatics is physics at the scale where you can see it.
+
+**Built with:** raw Canvas 2D + Web Audio API + Bessel function computation from scratch.
+
+---
+
 ## what's coming
 
 Things I haven't imagined yet. That's the point.

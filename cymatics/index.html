@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>cymatics</title>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    html, body { width:100%; height:100%; background:#000; overflow:hidden; user-select:none; font-family:'Georgia',serif; }
+    #canvas { position:fixed; inset:0; width:100%; height:100%; }
+
+    #ambient {
+      position:fixed; top:22px; left:50%; transform:translateX(-50%);
+      text-align:center; pointer-events:none; z-index:5;
+      opacity:0; transition:opacity 2s ease;
+    }
+    #ambient.visible { opacity:1; }
+    #amb-name { font-family:monospace; font-size:13px; letter-spacing:3px; color:#888866; text-transform:uppercase; display:block; }
+    #amb-freq { font-family:monospace; font-size:9px; letter-spacing:2px; color:#444433; display:block; margin-top:4px; }
+
+    #controls {
+      position:fixed; bottom:0; left:0; right:0; z-index:10;
+      padding:12px 24px 16px;
+      background:rgba(0,0,8,0.88);
+      backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px);
+      border-top:1px solid rgba(255,255,255,0.05);
+      opacity:0; transition:opacity 2s ease;
+    }
+    #controls.visible { opacity:1; }
+
+    #mode-grid {
+      display:flex; gap:5px; flex-wrap:wrap; justify-content:center; margin-bottom:10px;
+    }
+    .mode-btn {
+      font-family:monospace; font-size:8px; letter-spacing:1px;
+      color:#4A4A36; background:rgba(6,6,4,0.7);
+      border:1px solid rgba(80,80,40,0.25);
+      border-radius:10px; padding:4px 11px; cursor:pointer;
+      transition:color .2s, border-color .2s, background .2s; white-space:nowrap;
+    }
+    .mode-btn:hover  { color:#AAAA66; border-color:rgba(120,120,60,0.5); }
+    .mode-btn.active { color:#DDDD99; border-color:rgba(160,160,80,0.8); background:rgba(20,20,8,0.9); }
+
+    #bottom-row {
+      display:flex; align-items:center; justify-content:center; gap:14px;
+    }
+    .ctrl-group { display:flex; align-items:center; gap:7px; }
+    .ctrl-label { font-family:monospace; font-size:8px; letter-spacing:2px; color:#4A4A36; text-transform:uppercase; }
+    .pill {
+      font-family:monospace; font-size:8px; letter-spacing:1px;
+      color:#3A3A2A; background:rgba(6,6,4,0.6); border:1px solid rgba(60,60,30,0.25);
+      border-radius:10px; padding:3px 9px; cursor:pointer;
+      transition:color .2s, border-color .2s, background .2s;
+    }
+    .pill:hover  { color:#AAAA66; border-color:rgba(100,100,50,0.5); }
+    .pill.active { color:#DDDD99; border-color:rgba(140,140,70,0.8); background:rgba(20,20,8,0.9); }
+    input[type=range] {
+      -webkit-appearance:none; width:70px; height:2px;
+      background:#222215; outline:none; border-radius:1px;
+    }
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance:none; width:9px; height:9px; border-radius:50%;
+      background:#666633; cursor:pointer; transition:background .2s;
+    }
+    input[type=range]::-webkit-slider-thumb:hover { background:#AAAA66; }
+
+    #title-card {
+      position:fixed; inset:0; display:flex; flex-direction:column;
+      align-items:center; justify-content:center;
+      background:#000005; z-index:20; transition:opacity 1.8s ease; cursor:pointer;
+    }
+    #title-card h1    { color:#E8E8D0; font-size:32px; font-weight:300; letter-spacing:10px; text-transform:lowercase; margin-bottom:12px; }
+    #title-card p     { color:#2E2E20; font-size:11px; letter-spacing:4px; margin-bottom:14px; }
+    #title-card small { color:#1C1C14; font-size:9px; letter-spacing:3px; text-align:center; line-height:2.2; }
+    #title-card.fade-out { opacity:0; pointer-events:none; }
+  </style>
+</head>
+<body>
+
+<canvas id="canvas"></canvas>
+
+<div id="ambient">
+  <span id="amb-name">—</span>
+  <span id="amb-freq">—</span>
+</div>
+
+<div id="controls">
+  <div id="mode-grid"></div>
+  <div id="bottom-row">
+    <div class="ctrl-group">
+      <span class="ctrl-label">vol</span>
+      <input type="range" id="vol-slider" min="0" max="100" value="55" step="5">
+    </div>
+    <button class="pill active" id="sound-btn">sound</button>
+    <button class="pill" id="scatter-btn">scatter</button>
+  </div>
+</div>
+
+<div id="title-card">
+  <h1>cymatics</h1>
+  <p>sound made visible · vibration made form</p>
+  <small>click to begin<br>choose a mode · watch the sand find the silence<br>the pattern is the frequency</small>
+</div>
+
+<script>
+
+// ─── Bessel functions ──────────────────────────────────────────────────────
+
+function J0(x) {
+  x = Math.abs(x);
+  if (x === 0) return 1;
+  if (x <= 3.75) {
+    const t = x/3.75, t2 = t*t;
+    return 1 - 3.5156229*t2 + 3.0899424*t2*t2 - 1.2067492*Math.pow(t2,3)
+             + 0.2659732*Math.pow(t2,4) - 0.0360768*Math.pow(t2,5) + 0.0045813*Math.pow(t2,6);
+  }
+  const t = 3.75/x;
+  return (1/Math.sqrt(x)) *
+    (0.79788456 + t*(-0.00000077 + t*(-0.00552740 + t*(-0.00009512
+     + t*(0.00137237 + t*(-0.00072805 + t*0.00014476)))))) *
+    Math.cos(x - 0.78539816 + t*(0.04166397 + t*(0.00003954
+     + t*(-0.00262573 + t*(0.00054125 + t*(0.00029333 - t*0.00013558))))));
+}
+
+function J1(x) {
+  const sign = x < 0 ? -1 : 1;
+  x = Math.abs(x);
+  if (x === 0) return 0;
+  if (x <= 3.75) {
+    const t = x/3.75, t2 = t*t;
+    return sign * x * (0.5 + t2*(-0.56249985 + t2*(0.21093573 + t2*(-0.03954289
+             + t2*(0.00443319 + t2*(-0.00031761 + t2*0.00001109))))));
+  }
+  const t = 3.75/x;
+  return sign * (1/Math.sqrt(x)) *
+    (0.79788456 + t*(0.00000156 + t*(0.01659667 + t*(0.00017105
+     + t*(-0.00249511 + t*(0.00113653 - t*0.00020033)))))) *
+    Math.cos(x - 2.35619449 + t*(0.12499612 + t*(0.00005650
+     + t*(-0.00637879 + t*(0.00074348 + t*(0.00079824 - t*0.00029166))))));
+}
+
+function besselJ(m, x) {
+  if (m === 0) return J0(x);
+  if (m === 1) return J1(x);
+  if (x === 0) return 0;
+  if (m < 0)   return (m % 2 === 0 ? 1 : -1) * besselJ(-m, x);
+  let prev = J0(x), curr = J1(x);
+  for (let i = 1; i < m; i++) {
+    const next = (2*i/x)*curr - prev;
+    prev = curr; curr = next;
+  }
+  return curr;
+}
+
+// Known zeros of J_m (n-th positive zero, 1-indexed)
+const ZEROS = {
+  0: [2.4048, 5.5201, 8.6537],
+  1: [3.8317, 7.0156, 10.173],
+  2: [5.1356, 8.4172, 11.620],
+  3: [6.3802, 9.7610, 13.015],
+  4: [7.5883, 11.065, 14.373],
+  5: [8.7715, 12.339],
+};
+
+// ─── Modes ─────────────────────────────────────────────────────────────────
+
+const MODES = [
+  { m:0, n:1, name:'ring',       desc:'one nodal circle · the breathing mode'         },
+  { m:1, n:1, name:'halves',     desc:'one diameter · the plate split in two'         },
+  { m:2, n:1, name:'four petal', desc:'two diameters · four regions out of phase'     },
+  { m:3, n:1, name:'six petal',  desc:'three diameters · six-fold symmetry'           },
+  { m:4, n:1, name:'eight fold', desc:'four diameters · eight regions'                },
+  { m:0, n:2, name:'two rings',  desc:'two nodal circles · concentric silence'        },
+  { m:1, n:2, name:'cross+ring', desc:'diameter and ring intersect'                   },
+  { m:2, n:2, name:'flower',     desc:'two diameters and one ring · complex beauty'   },
+  { m:3, n:2, name:'star',       desc:'three diameters and one ring · rare pattern'   },
+];
+
+// ─── Force field ───────────────────────────────────────────────────────────
+
+const GRID = 180;
+
+function buildField(m, n) {
+  const k   = ZEROS[m][n - 1];
+  const Z   = new Float32Array(GRID * GRID);
+  const Z2  = new Float32Array(GRID * GRID);
+  const fxG = new Float32Array(GRID * GRID);
+  const fyG = new Float32Array(GRID * GRID);
+
+  // Compute Z field
+  for (let iy = 0; iy < GRID; iy++) {
+    for (let ix = 0; ix < GRID; ix++) {
+      const x = (ix / GRID - 0.5) * 2.0;
+      const y = (iy / GRID - 0.5) * 2.0;
+      const r = Math.sqrt(x*x + y*y);
+      const idx = iy*GRID + ix;
+      if (r >= 0.98 || r < 0.001) { Z[idx] = 0; Z2[idx] = 0; continue; }
+      const theta = Math.atan2(y, x);
+      const Jval  = besselJ(m, k * r);
+      const val   = Jval * Math.cos(m * theta);
+      Z[idx]  = val;
+      Z2[idx] = val * val;
+    }
+  }
+
+  // Gradient of Z² → force field (particles seek minima = nodal lines)
+  for (let iy = 1; iy < GRID - 1; iy++) {
+    for (let ix = 1; ix < GRID - 1; ix++) {
+      const idx = iy*GRID + ix;
+      const x = (ix / GRID - 0.5) * 2.0;
+      const y = (iy / GRID - 0.5) * 2.0;
+      const r = Math.sqrt(x*x + y*y);
+      if (r >= 0.95) { continue; }
+      const dz2dx = (Z2[idx+1]   - Z2[idx-1])     * 0.5;
+      const dz2dy = (Z2[idx+GRID] - Z2[idx-GRID]) * 0.5;
+      fxG[idx] = -dz2dx * 8.0;
+      fyG[idx] = -dz2dy * 8.0;
+    }
+  }
+
+  // Frequency: proportional to k (Bessel zero)
+  const baseK = ZEROS[0][0]; // 2.4048
+  const freqRatio = k / baseK;
+
+  return { fxG, fyG, freqRatio, k };
+}
+
+// ─── Particles ─────────────────────────────────────────────────────────────
+
+const NP  = 4200;
+const px  = new Float32Array(NP);
+const py  = new Float32Array(NP);
+const pvx = new Float32Array(NP);
+const pvy = new Float32Array(NP);
+
+function randomInCircle() {
+  let x, y;
+  do { x = Math.random()*2-1; y = Math.random()*2-1; } while (x*x+y*y >= 0.9*0.9);
+  return { x, y };
+}
+
+function initParticles() {
+  for (let i = 0; i < NP; i++) {
+    const p = randomInCircle();
+    px[i] = p.x; py[i] = p.y;
+    pvx[i] = (Math.random()-.5)*0.01;
+    pvy[i] = (Math.random()-.5)*0.01;
+  }
+}
+
+function scatter() {
+  for (let i = 0; i < NP; i++) {
+    pvx[i] += (Math.random()-.5)*0.035;
+    pvy[i] += (Math.random()-.5)*0.035;
+  }
+  chaosBlend = 1.0;
+}
+
+let chaosBlend  = 1.0;   // 1 = full chaos, 0 = pure Chladni
+let currentField = null;
+
+function lerpField(x, y, fxG, fyG) {
+  const gx = (x * 0.5 + 0.5) * GRID;
+  const gy = (y * 0.5 + 0.5) * GRID;
+  const ix = Math.floor(gx), iy = Math.floor(gy);
+  if (ix < 0 || ix >= GRID-1 || iy < 0 || iy >= GRID-1) return {fx:0, fy:0};
+  const tx = gx-ix, ty = gy-iy;
+  const i00 = iy*GRID+ix, i10 = i00+1, i01 = i00+GRID, i11 = i01+1;
+  return {
+    fx: fxG[i00]*(1-tx)*(1-ty) + fxG[i10]*tx*(1-ty) + fxG[i01]*(1-tx)*ty + fxG[i11]*tx*ty,
+    fy: fyG[i00]*(1-tx)*(1-ty) + fyG[i10]*tx*(1-ty) + fyG[i01]*(1-tx)*ty + fyG[i11]*tx*ty,
+  };
+}
+
+function stepParticles() {
+  if (!currentField) return;
+  const { fxG, fyG } = currentField;
+  const DAMP  = 0.975;
+  const NOISE = 0.0008 * chaosBlend;
+
+  chaosBlend = Math.max(0, chaosBlend - 0.004);
+
+  for (let i = 0; i < NP; i++) {
+    const { fx, fy } = lerpField(px[i], py[i], fxG, fyG);
+    const forceScale = 0.00028 + 0.00055 * (1 - chaosBlend);
+
+    pvx[i] = (pvx[i] + fx*forceScale + (Math.random()-.5)*NOISE) * DAMP;
+    pvy[i] = (pvy[i] + fy*forceScale + (Math.random()-.5)*NOISE) * DAMP;
+
+    px[i] += pvx[i];
+    py[i] += pvy[i];
+
+    const r2 = px[i]*px[i] + py[i]*py[i];
+    if (r2 > 0.9*0.9) {
+      const r = Math.sqrt(r2);
+      const nx = px[i]/r, ny = py[i]/r;
+      px[i] = nx*0.88; py[i] = ny*0.88;
+      const dot = pvx[i]*nx + pvy[i]*ny;
+      pvx[i] -= 1.8*dot*nx;
+      pvy[i] -= 1.8*dot*ny;
+      pvx[i] *= 0.5; pvy[i] *= 0.5;
+    }
+  }
+}
+
+// ─── Canvas & render ───────────────────────────────────────────────────────
+
+const canvas = document.getElementById('canvas');
+const ctx    = canvas.getContext('2d');
+let W, H, CX, CY, plateR;
+
+function resize() {
+  W = canvas.width  = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+  CX = W/2; CY = H/2;
+  plateR = Math.min(W, H) * 0.44;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// Each render: slow fade, draw particles as tiny bright dots
+function render() {
+  ctx.fillStyle = 'rgba(0,0,4,0.06)';
+  ctx.fillRect(0, 0, W, H);
+
+  // Sand particles
+  for (let i = 0; i < NP; i++) {
+    const sx = CX + px[i] * plateR;
+    const sy = CY + py[i] * plateR;
+    // Brightness: dimmer when fast (in motion), brighter when slow (settled at node)
+    const speed = Math.sqrt(pvx[i]*pvx[i] + pvy[i]*pvy[i]);
+    const bright = Math.max(0.25, 1.0 - speed * 120);
+    ctx.fillStyle = `rgba(230,225,190,${bright * 0.22})`;
+    ctx.fillRect(sx-1, sy-1, 2, 2);
+  }
+
+  // Plate rim — very subtle circle
+  ctx.beginPath();
+  ctx.arc(CX, CY, plateR, 0, Math.PI*2);
+  ctx.strokeStyle = 'rgba(100,100,60,0.12)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+}
+
+// ─── Sound ────────────────────────────────────────────────────────────────
+
+let audioCtx = null, masterGain = null, toneOsc = null;
+let soundOn = true, volumeLevel = 0.55;
+
+function initSound() {
+  if (audioCtx) return;
+  audioCtx   = new (window.AudioContext||window.webkitAudioContext)();
+  masterGain = audioCtx.createGain();
+  masterGain.gain.value = 0;
+  masterGain.connect(audioCtx.destination);
+
+  toneOsc = audioCtx.createOscillator();
+  toneOsc.type = 'sine';
+  toneOsc.frequency.value = 80;
+  const g = audioCtx.createGain();
+  g.gain.value = 0.7;
+  toneOsc.connect(g); g.connect(masterGain);
+  toneOsc.start();
+}
+
+function setToneFreq(ratio) {
+  if (!toneOsc) return;
+  toneOsc.frequency.setTargetAtTime(80 * ratio, audioCtx.currentTime, 0.3);
+  masterGain.gain.setTargetAtTime(soundOn ? volumeLevel * 0.14 : 0, audioCtx.currentTime, 0.4);
+}
+
+// ─── Mode switching ────────────────────────────────────────────────────────
+
+let activeMode = null;
+
+function setMode(mode) {
+  activeMode = mode;
+
+  // Scramble particles
+  scatter();
+
+  // Compute new field (slight delay feels natural)
+  setTimeout(() => {
+    currentField = buildField(mode.m, mode.n);
+    chaosBlend = 0.85;
+
+    document.getElementById('amb-name').textContent = mode.name;
+    document.getElementById('amb-freq').textContent =
+      `mode (${mode.m},${mode.n}) · ${mode.desc}`;
+
+    document.querySelectorAll('.mode-btn').forEach(b => {
+      b.classList.toggle('active', parseInt(b.dataset.m)===mode.m && parseInt(b.dataset.n)===mode.n);
+    });
+
+    if (toneOsc) setToneFreq(currentField.freqRatio);
+  }, 80);
+}
+
+// ─── Build mode grid ───────────────────────────────────────────────────────
+
+const modeGrid = document.getElementById('mode-grid');
+MODES.forEach(mode => {
+  const btn = document.createElement('button');
+  btn.className = 'mode-btn';
+  btn.dataset.m = mode.m;
+  btn.dataset.n = mode.n;
+  btn.textContent = mode.name;
+  btn.addEventListener('click', () => setMode(mode));
+  modeGrid.appendChild(btn);
+});
+
+// ─── Loop ──────────────────────────────────────────────────────────────────
+
+let started = false;
+
+function loop() {
+  stepParticles();
+  render();
+  if (started) requestAnimationFrame(loop);
+}
+
+// ─── Controls ──────────────────────────────────────────────────────────────
+
+document.getElementById('vol-slider').addEventListener('input', e => {
+  volumeLevel = e.target.value / 100;
+  if (masterGain && soundOn) masterGain.gain.setTargetAtTime(volumeLevel * 0.14, audioCtx.currentTime, 0.1);
+});
+
+document.getElementById('sound-btn').addEventListener('click', () => {
+  soundOn = !soundOn;
+  document.getElementById('sound-btn').classList.toggle('active', soundOn);
+  if (masterGain) masterGain.gain.setTargetAtTime(soundOn ? volumeLevel*0.14 : 0, audioCtx.currentTime, 0.3);
+});
+
+document.getElementById('scatter-btn').addEventListener('click', () => {
+  scatter();
+});
+
+// ─── Boot ──────────────────────────────────────────────────────────────────
+
+initParticles();
+
+document.getElementById('title-card').addEventListener('pointerdown', () => {
+  document.getElementById('title-card').classList.add('fade-out');
+  document.getElementById('controls').classList.add('visible');
+  document.getElementById('ambient').classList.add('visible');
+  initSound(); audioCtx.resume();
+  started = true;
+
+  // Black canvas
+  ctx.fillStyle = '#000004';
+  ctx.fillRect(0, 0, W, H);
+
+  setMode(MODES[2]); // Start on four petal — visually striking right away
+  requestAnimationFrame(loop);
+
+  setTimeout(() => { document.getElementById('title-card').style.display='none'; }, 2000);
+}, { once: true });
+
+</script>
+</body>
+</html>

@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>resonance</title>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    html, body { width:100%; height:100%; background:#000; overflow:hidden; user-select:none; font-family:'Georgia',serif; }
+
+    #canvas { position:fixed; inset:0; width:100%; height:100%; }
+
+    /* ── Ambient label ──────────────────────────────────────────── */
+    #ambient {
+      position:fixed; top:24px; left:50%; transform:translateX(-50%);
+      text-align:center; pointer-events:none; z-index:5;
+      opacity:0; transition:opacity 2s ease;
+    }
+    #ambient.visible { opacity:1; }
+    #amb-name {
+      font-family:monospace; font-size:11px; letter-spacing:3px;
+      color:#5555AA; text-transform:uppercase; display:block;
+    }
+    #amb-desc {
+      font-family:monospace; font-size:9px; letter-spacing:2px;
+      color:#2A2A44; text-transform:uppercase; display:block; margin-top:4px;
+    }
+
+    /* ── Controls ───────────────────────────────────────────────── */
+    #controls {
+      position:fixed; bottom:0; left:0; right:0; z-index:10;
+      padding:12px 24px 16px;
+      background:rgba(0,0,12,0.85);
+      backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px);
+      border-top:1px solid rgba(255,255,255,0.05);
+      opacity:0; transition:opacity 2s ease;
+    }
+    #controls.visible { opacity:1; }
+
+    #slider-row {
+      display:flex; align-items:center; gap:14px; margin-bottom:10px;
+    }
+    #ratio-display {
+      font-family:monospace; font-size:13px; letter-spacing:1px;
+      color:#7777BB; min-width:54px; text-align:right; flex-shrink:0;
+    }
+    #main-slider {
+      flex:1; -webkit-appearance:none; height:2px;
+      background:linear-gradient(to right, #222240, #4444AA, #222240);
+      outline:none; border-radius:1px;
+    }
+    #main-slider::-webkit-slider-thumb {
+      -webkit-appearance:none; width:14px; height:14px; border-radius:50%;
+      background:#7777CC; cursor:pointer; transition:background .2s, transform .2s;
+      box-shadow:0 0 8px rgba(100,100,200,0.5);
+    }
+    #main-slider::-webkit-slider-thumb:hover { background:#AAAAEE; transform:scale(1.2); }
+    #period-display {
+      font-family:monospace; font-size:11px; letter-spacing:1px;
+      color:#333358; min-width:24px; text-align:left; flex-shrink:0;
+    }
+
+    #snap-row {
+      display:flex; align-items:center; justify-content:space-between;
+    }
+    .snap-pills { display:flex; gap:5px; flex-wrap:wrap; }
+    .snap {
+      font-family:monospace; font-size:8px; letter-spacing:1px;
+      color:#3A3A60; background:rgba(6,6,20,0.6);
+      border:1px solid rgba(60,60,120,0.25);
+      border-radius:10px; padding:3px 10px; cursor:pointer;
+      transition:color .2s, border-color .2s, background .2s;
+      white-space:nowrap;
+    }
+    .snap:hover  { color:#7777BB; border-color:rgba(80,80,180,0.5); }
+    .snap.active { color:#AAAAEE; border-color:rgba(120,120,240,0.8); background:rgba(20,20,60,0.9); }
+
+    .right-pills { display:flex; align-items:center; gap:8px; }
+    .vol-label { font-family:monospace; font-size:8px; letter-spacing:2px; color:#3A3A60; text-transform:uppercase; }
+    #vol-slider { -webkit-appearance:none; width:60px; height:2px; background:#222240; outline:none; border-radius:1px; }
+    #vol-slider::-webkit-slider-thumb { -webkit-appearance:none; width:9px; height:9px; border-radius:50%; background:#5555AA; cursor:pointer; transition:background .2s; }
+    #vol-slider::-webkit-slider-thumb:hover { background:#8888CC; }
+    .pill {
+      font-family:monospace; font-size:8px; letter-spacing:1px;
+      color:#3A3A60; background:rgba(6,6,20,0.6);
+      border:1px solid rgba(60,60,120,0.25);
+      border-radius:10px; padding:3px 10px; cursor:pointer;
+      transition:color .2s, border-color .2s, background .2s;
+    }
+    .pill:hover  { color:#7777BB; border-color:rgba(80,80,180,0.5); }
+    .pill.active { color:#AAAAEE; border-color:rgba(120,120,240,0.8); background:rgba(20,20,60,0.9); }
+
+    /* ── Title card ──────────────────────────────────────────────── */
+    #title-card {
+      position:fixed; inset:0; display:flex; flex-direction:column;
+      align-items:center; justify-content:center;
+      background:#000008; z-index:20;
+      transition:opacity 1.8s ease; cursor:pointer;
+    }
+    #title-card h1    { color:#DDDDF8; font-size:32px; font-weight:300; letter-spacing:10px; text-transform:lowercase; margin-bottom:12px; }
+    #title-card p     { color:#333350; font-size:11px; letter-spacing:4px; margin-bottom:14px; }
+    #title-card small { color:#1E1E30; font-size:9px; letter-spacing:3px; text-align:center; line-height:2.2; }
+    #title-card.fade-out { opacity:0; pointer-events:none; }
+  </style>
+</head>
+<body>
+
+<canvas id="canvas"></canvas>
+
+<div id="ambient">
+  <span id="amb-name">—</span>
+  <span id="amb-desc">—</span>
+</div>
+
+<div id="controls">
+  <div id="slider-row">
+    <div id="ratio-display">3:2</div>
+    <input type="range" id="main-slider" min="100" max="300" value="150" step="1">
+    <div id="period-display">∞</div>
+  </div>
+  <div id="snap-row">
+    <div class="snap-pills">
+      <button class="snap" data-v="100">1:1</button>
+      <button class="snap" data-v="133">4:3</button>
+      <button class="snap active" data-v="150">3:2</button>
+      <button class="snap" data-v="162">φ</button>
+      <button class="snap" data-v="200">2:1</button>
+      <button class="snap" data-v="250">5:2</button>
+    </div>
+    <div class="right-pills">
+      <button class="pill active" id="mode-btn">harmonograph</button>
+      <span class="vol-label">vol</span>
+      <input type="range" id="vol-slider" min="0" max="100" value="60" step="5">
+      <button class="pill active" id="sound-btn">sound</button>
+    </div>
+  </div>
+</div>
+
+<div id="title-card">
+  <h1>resonance</h1>
+  <p>two frequencies · one ratio · infinite form</p>
+  <small>click to begin<br>drag the slider · click the ratios<br>watch what closes · feel what doesn't</small>
+</div>
+
+<script>
+// ─── Constants ─────────────────────────────────────────────────────────────
+
+const φ = (1 + Math.sqrt(5)) / 2; // 1.6180339887...
+const GOLDEN_ANGLE = 360 / (φ * φ);  // 137.508°
+
+const SNAPS = [
+  { v: 1.0,   label: '1:1',  name: 'unison',          desc: 'same frequency · same form'          },
+  { v: 4/3,   label: '4:3',  name: 'perfect fourth',  desc: 'closes in 3 cycles'                  },
+  { v: 3/2,   label: '3:2',  name: 'perfect fifth',   desc: 'closes in 2 cycles · the spine of music' },
+  { v: φ,     label: 'φ',    name: 'golden ratio',    desc: 'never closes · never random'         },
+  { v: 2.0,   label: '2:1',  name: 'octave',          desc: 'closes in 1 cycle · pure doubling'   },
+  { v: 5/2,   label: '5:2',  name: 'fifth + octave',  desc: 'closes in 2 cycles'                  },
+];
+
+function gcd(a, b) { return b < 0.001 ? a : gcd(b, a % b); }
+
+function toFraction(r) {
+  if (Math.abs(r - φ) < 0.012) return 'φ:1';
+  for (let d = 1; d <= 20; d++) {
+    const n = Math.round(r * d);
+    if (Math.abs(n/d - r) < 0.005) {
+      const g = gcd(n, d);
+      return `${n/g}:${d/g}`;
+    }
+  }
+  return r.toFixed(3);
+}
+
+function getPeriod(r) {
+  if (Math.abs(r - φ) < 0.012) return Infinity;
+  for (let d = 1; d <= 24; d++) {
+    const n = Math.round(r * d);
+    if (Math.abs(n/d - r) < 0.005) {
+      const g = gcd(n, d);
+      return d / g;
+    }
+  }
+  return Infinity;
+}
+
+function nearestSnap(r) {
+  for (const s of SNAPS) {
+    if (Math.abs(r - s.v) < 0.015) return s;
+  }
+  return null;
+}
+
+// ─── Canvas ────────────────────────────────────────────────────────────────
+
+const canvas = document.getElementById('canvas');
+const ctx    = canvas.getContext('2d');
+let W, H, CX, CY, A;
+
+function resize() {
+  W = canvas.width  = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+  CX = W / 2; CY = H / 2;
+  A  = Math.min(W, H) * 0.40;
+}
+resize();
+window.addEventListener('resize', () => { resize(); if (mode === 'phyllo') drawPhyllo(true); });
+
+// ─── Mode & ratio state ────────────────────────────────────────────────────
+
+let mode  = 'harmono';   // 'harmono' | 'phyllo'
+let ratio = 3/2;
+let sliderToRatio = v => 1.0 + (v - 100) / 100; // 100→1.0, 300→3.0
+let ratioToSlider = r => Math.round((r - 1.0) * 100 + 100);
+
+// ─── Harmonograph state ────────────────────────────────────────────────────
+
+let t          = 0;
+let phase      = Math.PI * 0.55;
+let hue        = 220;
+const DT       = 0.038;
+const D_PHASE  = 0.00055;
+const D_HUE    = 0.18;
+const FADE     = 0.008;
+
+let prevX = null, prevY = null;
+
+function harmono_point(tt, ph) {
+  return {
+    x: CX + A * Math.sin(tt),
+    y: CY + A * Math.sin(ratio * tt + ph),
+  };
+}
+
+function drawHarmono() {
+  // Slow fade
+  ctx.fillStyle = `rgba(0,0,8,${FADE})`;
+  ctx.fillRect(0, 0, W, H);
+
+  const p1 = harmono_point(t, phase);
+  if (prevX !== null) {
+    ctx.strokeStyle = `hsl(${hue},72%,56%)`;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(prevX, prevY);
+    ctx.lineTo(p1.x, p1.y);
+    ctx.stroke();
+  }
+  prevX = p1.x; prevY = p1.y;
+
+  t     += DT;
+  phase += D_PHASE;
+  hue    = (hue + D_HUE) % 360;
+}
+
+// ─── Phyllotaxis state ─────────────────────────────────────────────────────
+
+let phylloAngle  = GOLDEN_ANGLE;   // degrees
+let phylloN      = 0;
+const PHYLLO_MAX = 1400;
+const PHYLLO_SPACING = 0.32; // scale factor for radius
+
+let phylloPoints = [];
+
+function phylloToSlider(deg) { return Math.round((deg - 120) / 60 * 200 + 100); }
+function sliderToPhyllo(v)   { return 120 + (v - 100) / 200 * 60; }
+
+function drawPhyllo(reset) {
+  if (reset) {
+    ctx.fillStyle = '#000008';
+    ctx.fillRect(0, 0, W, H);
+    phylloN = 0;
+    phylloPoints = [];
+    return;
+  }
+
+  const BATCH = 4;
+  const maxR = Math.min(W, H) * 0.46;
+  const spacing = maxR / Math.sqrt(PHYLLO_MAX);
+
+  for (let b = 0; b < BATCH && phylloN < PHYLLO_MAX; b++, phylloN++) {
+    const i   = phylloN;
+    const ang = i * phylloAngle * Math.PI / 180;
+    const r   = Math.sqrt(i) * spacing;
+    const x   = CX + r * Math.cos(ang);
+    const y   = CY + r * Math.sin(ang);
+    const hh  = (i * phylloAngle) % 360;
+    const rad = Math.max(1.5, 4.5 - r / maxR * 3);
+
+    ctx.beginPath();
+    ctx.arc(x, y, rad, 0, Math.PI * 2);
+    ctx.fillStyle = `hsl(${hh},70%,58%)`;
+    ctx.fill();
+  }
+}
+
+// ─── Sound ────────────────────────────────────────────────────────────────
+
+let audioCtx = null, masterGain = null, osc1 = null, osc2 = null;
+let soundOn = true;
+
+let volumeLevel = 0.60;
+
+function initSound() {
+  if (audioCtx) return;
+  audioCtx  = new (window.AudioContext || window.webkitAudioContext)();
+  masterGain = audioCtx.createGain();
+  masterGain.gain.value = volumeLevel * 0.16;
+  masterGain.connect(audioCtx.destination);
+
+  const makeOsc = (freq, gainVal) => {
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = 'sine'; o.frequency.value = freq;
+    g.gain.value = gainVal;
+    o.connect(g); g.connect(masterGain); o.start();
+    return o;
+  };
+
+  osc1 = makeOsc(110,      0.45);
+  osc2 = makeOsc(110*ratio, 0.45);
+}
+
+function updateSound() {
+  if (!osc2 || !audioCtx) return;
+  const freq2 = mode === 'harmono' ? 110 * ratio : 110 * (phylloAngle / GOLDEN_ANGLE);
+  osc2.frequency.setTargetAtTime(freq2, audioCtx.currentTime, 0.15);
+  masterGain.gain.setTargetAtTime(soundOn ? volumeLevel * 0.16 : 0, audioCtx.currentTime, 0.3);
+}
+
+// ─── UI updates ────────────────────────────────────────────────────────────
+
+function updateDisplay() {
+  const frac    = toFraction(ratio);
+  const period  = getPeriod(ratio);
+  const snap    = nearestSnap(ratio);
+
+  document.getElementById('ratio-display').textContent = frac;
+  document.getElementById('period-display').textContent =
+    period === Infinity ? '∞' : `×${period}`;
+
+  document.getElementById('amb-name').textContent =
+    snap ? snap.name : frac;
+  document.getElementById('amb-desc').textContent =
+    snap ? snap.desc : (period === Infinity ? 'never closes · never random' : `closes in ${period} cycle${period!==1?'s':''}`);
+
+  document.querySelectorAll('.snap').forEach(b => {
+    const sv = sliderToRatio(parseInt(b.dataset.v));
+    b.classList.toggle('active', snap && Math.abs(sv - ratio) < 0.015);
+  });
+}
+
+function updatePhylloDisplay() {
+  const frac = (phylloAngle).toFixed(2) + '°';
+  const isGolden = Math.abs(phylloAngle - GOLDEN_ANGLE) < 0.1;
+  document.getElementById('ratio-display').textContent = isGolden ? '137.5°' : frac;
+  document.getElementById('period-display').textContent = isGolden ? 'φ' : '';
+  document.getElementById('amb-name').textContent = isGolden ? 'golden angle' : 'divergence angle';
+  document.getElementById('amb-desc').textContent = isGolden
+    ? 'maximum spread · minimum overlap'
+    : `${(360 / phylloAngle).toFixed(2)} rotations per leaf`;
+}
+
+// ─── Main loop ─────────────────────────────────────────────────────────────
+
+let started = false;
+let phylloBuilding = false;
+
+function loop() {
+  if (mode === 'harmono') {
+    drawHarmono();
+  } else {
+    if (phylloN < PHYLLO_MAX) {
+      drawPhyllo(false);
+    }
+  }
+  if (started) requestAnimationFrame(loop);
+}
+
+// ─── Event handlers ────────────────────────────────────────────────────────
+
+const slider = document.getElementById('main-slider');
+
+slider.addEventListener('input', () => {
+  const v = parseInt(slider.value);
+  if (mode === 'harmono') {
+    ratio = sliderToRatio(v);
+    prevX = null; // break trail on change
+    updateDisplay();
+    updateSound();
+  } else {
+    phylloAngle = sliderToPhyllo(v);
+    drawPhyllo(true);
+    updatePhylloDisplay();
+    updateSound();
+  }
+});
+
+document.querySelectorAll('.snap').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const v = parseInt(btn.dataset.v);
+    slider.value = v;
+    if (mode === 'harmono') {
+      ratio = sliderToRatio(v);
+      prevX = null;
+      updateDisplay();
+      updateSound();
+    } else {
+      // snap buttons are ratio-based; map to angle for phyllo
+      const r = sliderToRatio(v);
+      phylloAngle = r === φ ? GOLDEN_ANGLE : GOLDEN_ANGLE * (φ / r);
+      drawPhyllo(true);
+      updatePhylloDisplay();
+      updateSound();
+    }
+  });
+});
+
+document.getElementById('mode-btn').addEventListener('click', () => {
+  mode = mode === 'harmono' ? 'phyllo' : 'harmono';
+  const btn = document.getElementById('mode-btn');
+  btn.textContent = mode === 'harmono' ? 'harmonograph' : 'phyllotaxis';
+
+  if (mode === 'harmono') {
+    slider.min = 100; slider.max = 300;
+    slider.value = ratioToSlider(ratio);
+    ctx.fillStyle = '#000008'; ctx.fillRect(0, 0, W, H);
+    prevX = null;
+    updateDisplay();
+  } else {
+    slider.min = 100; slider.max = 300;
+    // Map current ratio to phyllo angle
+    phylloAngle = Math.abs(ratio - φ) < 0.05 ? GOLDEN_ANGLE : 120 + (ratio - 1.0) * 20;
+    phylloAngle = Math.max(120, Math.min(180, phylloAngle));
+    slider.value = phylloToSlider(phylloAngle);
+    drawPhyllo(true);
+    updatePhylloDisplay();
+  }
+  updateSound();
+});
+
+document.getElementById('vol-slider').addEventListener('input', e => {
+  volumeLevel = e.target.value / 100;
+  if (masterGain && soundOn) masterGain.gain.setTargetAtTime(volumeLevel * 0.16, audioCtx.currentTime, 0.1);
+});
+
+document.getElementById('sound-btn').addEventListener('click', () => {
+  soundOn = !soundOn;
+  document.getElementById('sound-btn').classList.toggle('active', soundOn);
+  updateSound();
+});
+
+// ─── Boot ──────────────────────────────────────────────────────────────────
+
+updateDisplay();
+
+document.getElementById('title-card').addEventListener('pointerdown', () => {
+  document.getElementById('title-card').classList.add('fade-out');
+  document.getElementById('controls').classList.add('visible');
+  document.getElementById('ambient').classList.add('visible');
+  initSound(); audioCtx.resume();
+  started = true;
+
+  // Warm up: draw initial figure quietly
+  ctx.fillStyle = '#000008'; ctx.fillRect(0, 0, W, H);
+  for (let i = 0; i < 1200; i++) {
+    const p = harmono_point(t, phase);
+    if (prevX !== null) {
+      ctx.strokeStyle = `hsl(${hue},72%,56%)`;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(prevX, prevY); ctx.lineTo(p.x, p.y); ctx.stroke();
+    }
+    prevX = p.x; prevY = p.y;
+    t += DT; phase += D_PHASE; hue = (hue + D_HUE) % 360;
+  }
+
+  requestAnimationFrame(loop);
+  setTimeout(() => { document.getElementById('title-card').style.display = 'none'; }, 2000);
+}, { once: true });
+
+</script>
+</body>
+</html>
