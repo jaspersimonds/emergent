@@ -81,13 +81,15 @@ The goal: keep the light alive.
 
 A reaction-diffusion simulator. Two chemicals, two equations, infinite outcomes.
 
-**[Play v2 →](https://jaspersimonds.github.io/emergent/morphogenesis/)** · **[v1 →](https://jaspersimonds.github.io/emergent/morphogenesis/v1.html)**
+**[Play v3 →](https://jaspersimonds.github.io/emergent/morphogenesis/)** · **[v2 →](https://jaspersimonds.github.io/emergent/morphogenesis/v2.html)** · **[v1 →](https://jaspersimonds.github.io/emergent/morphogenesis/v1.html)**
 
 This is Alan Turing's 1952 theory of how living things grow their patterns — leopard spots, coral branching, zebra fish stripes — made visible and playable. The Gray-Scott model: chemical U feeds, chemical V reacts, and from two differential equations, complex organic forms emerge from nothing.
 
-**v1** — five named presets (mitosis, coral, worms, labyrinth, spirals), dual-chemistry color mode, additive/subtractive brush, sound driven by regional chemistry.
+**v1** — five named presets, dual-chemistry color mode, additive/subtractive brush, sound driven by regional chemistry.
 
-**v2** — the parameter navigator. A 2D pad in the corner maps the full parameter space. The named presets are just anchors — labeled islands in an ocean of unnamed chemistry. Drag anywhere. Watch what grows. Find things that don't have names yet.
+**v2** — the parameter navigator. A 2D pad maps the full parameter space. The named presets are just anchors — labeled islands in an ocean of unnamed chemistry. Drag anywhere. Find things that don't have names yet.
+
+**v3** — the navigator is now a proper panel: double the size (280×280), draggable, with a `?` button that opens a field guide. The guide teaches you what you're actually looking at — what U and V are, what f and k control, what each named region looks like and why it's called that. The mitosis entry explains Alan Turing's original 1952 hypothesis. The pulsars entry names the Belousov–Zhabotinsky reaction. Real science, zero textbook. The order of sections was designed deliberately: orient first, act second, then understand the controls, then the map, then go deeper into the named regions. You learn by doing, not by reading first.
 
 Nine named regions are marked on the map. Hundreds more are waiting.
 

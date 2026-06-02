@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>morphogenesis</title>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    html, body { width:100%; height:100%; background:#000; overflow:hidden; user-select:none; font-family:'Georgia',serif; }
+
+    #canvas {
+      position:fixed; inset:0; width:100%; height:100%;
+      image-rendering:auto; cursor:crosshair;
+    }
+
+    /* ── Navigator pad ───────────────────────────────────────── */
+    #nav-wrap {
+      position:fixed; top:18px; right:18px; z-index:15;
+      display:flex; flex-direction:column; align-items:flex-end; gap:5px;
+      opacity:0; transition:opacity 1.8s ease;
+    }
+    #nav-wrap.visible { opacity:1; }
+    #nav-pad {
+      width:136px; height:136px;
+      border:1px solid rgba(255,255,255,0.08);
+      border-radius:4px; cursor:crosshair;
+      display:block;
+    }
+    #nav-info {
+      font-family:monospace; font-size:8px; letter-spacing:1px;
+      color:#44446A; text-align:right; line-height:1.6;
+    }
+    #nav-region { color:#6666AA; }
+
+    /* ── Title card ─────────────────────────────────────────── */
+    #title-card {
+      position:fixed; inset:0;
+      display:flex; flex-direction:column; align-items:center; justify-content:center;
+      background:#000008; z-index:20; transition:opacity 1.6s ease; cursor:pointer;
+    }
+    #title-card h1    { color:#EEF0F8; font-size:28px; font-weight:300; letter-spacing:8px; text-transform:lowercase; margin-bottom:10px; }
+    #title-card p     { color:#404060; font-size:12px; letter-spacing:4px; margin-bottom:48px; }
+    #title-card .hint { color:#282838; font-size:10px; letter-spacing:2px; text-align:center; line-height:2; }
+    #title-card.fade-out { opacity:0; pointer-events:none; }
+
+    /* ── Controls strip ─────────────────────────────────────── */
+    #controls {
+      position:fixed; bottom:0; left:0; right:0;
+      display:flex; flex-wrap:wrap; align-items:center; justify-content:center;
+      gap:12px 22px; padding:10px 20px 13px;
+      background:rgba(0,0,12,0.72);
+      backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
+      border-top:1px solid rgba(255,255,255,0.05);
+      z-index:10; opacity:0; transition:opacity 2s ease;
+    }
+    #controls.visible { opacity:1; }
+
+    .ctrl-group { display:flex; align-items:center; gap:7px; }
+    .ctrl-label { font-family:monospace; font-size:8px; letter-spacing:2px; color:#5A5A7E; text-transform:uppercase; white-space:nowrap; }
+    .ctrl-value { font-family:monospace; font-size:9px; color:#6A6A90; min-width:28px; }
+    .sep        { width:1px; height:22px; background:rgba(255,255,255,0.07); }
+
+    input[type=range] { -webkit-appearance:none; width:80px; height:2px; background:#222240; outline:none; border-radius:1px; }
+    input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:9px; height:9px; border-radius:50%; background:#5555AA; cursor:pointer; transition:background .2s; }
+    input[type=range]::-webkit-slider-thumb:hover { background:#8888CC; }
+
+    .btn-row { display:flex; gap:3px; }
+    .pill {
+      font-family:monospace; font-size:8px; letter-spacing:1px;
+      color:#4A4A6E; background:rgba(6,6,20,0.6); border:1px solid rgba(80,80,160,0.25);
+      border-radius:10px; padding:3px 9px; cursor:pointer; white-space:nowrap;
+      transition:color .2s, border-color .2s, background .2s;
+    }
+    .pill:hover  { color:#8888CC; border-color:rgba(100,100,200,0.5); }
+    .pill.active { color:#AAAAEE; border-color:rgba(100,100,220,0.7); background:rgba(20,20,60,0.8); }
+
+    #info {
+      position:fixed; top:20px; left:50%; transform:translateX(-50%);
+      font-family:monospace; font-size:9px; letter-spacing:3px;
+      color:#1A1A28; text-transform:uppercase; pointer-events:none; z-index:5;
+    }
+
+    #pause-hint {
+      position:fixed; bottom:60px; left:50%; transform:translateX(-50%);
+      font-family:monospace; font-size:8px; letter-spacing:2px; color:#22223A;
+      pointer-events:none; z-index:5; transition:opacity 0.3s;
+    }
+    #pause-hint.showing { color:#5555AA; }
+  </style>
+</head>
+<body>
+
+<canvas id="canvas"></canvas>
+<div id="info">morphogenesis</div>
+<div id="pause-hint">paused — space to resume</div>
+
+<!-- ── 2D Parameter Navigator ──────────────────────────────────── -->
+<div id="nav-wrap">
+  <canvas id="nav-pad" width="136" height="136"></canvas>
+  <div id="nav-info">
+    <span id="nav-f">f 0.028</span> · <span id="nav-k">k 0.062</span><br>
+    <span id="nav-region">mitosis</span>
+  </div>
+</div>
+
+<div id="title-card">
+  <h1>morphogenesis</h1>
+  <p>two chemicals · simple rules · complex life</p>
+  <div class="hint">click to begin · paint to disturb<br>drag the map to explore the unknown</div>
+</div>
+
+<div id="controls">
+  <div class="ctrl-group">
+    <div class="ctrl-label">Color</div>
+    <div class="btn-row">
+      <button class="pill active" data-palette="abyss">abyss</button>
+      <button class="pill" data-palette="solar">solar</button>
+      <button class="pill" data-palette="bloom">bloom</button>
+      <button class="pill" data-palette="ghost">ghost</button>
+    </div>
+    <button class="pill" id="dual-btn">dual</button>
+  </div>
+  <div class="sep"></div>
+  <div class="ctrl-group">
+    <div class="ctrl-label">Brush</div>
+    <div class="btn-row">
+      <button class="pill active" id="add-btn">add</button>
+      <button class="pill" id="sub-btn">erase</button>
+    </div>
+    <input type="range" id="brush-slider" min="2" max="22" value="7" step="1">
+    <div class="ctrl-value" id="brush-val">7</div>
+  </div>
+  <div class="sep"></div>
+  <div class="ctrl-group">
+    <div class="ctrl-label">Speed</div>
+    <input type="range" id="speed-slider" min="1" max="14" value="4" step="1">
+    <div class="ctrl-value" id="speed-val">4</div>
+  </div>
+  <div class="sep"></div>
+  <div class="ctrl-group">
+    <div class="ctrl-label">Volume</div>
+    <input type="range" id="vol-slider" min="0" max="100" value="65" step="5">
+    <div class="ctrl-value" id="vol-val">65%</div>
+    <button class="pill active" id="sound-btn">on</button>
+  </div>
+  <div class="sep"></div>
+  <div class="ctrl-group">
+    <div class="ctrl-label">Space</div>
+    <button class="pill" id="pause-btn">pause</button>
+    <button class="pill" id="reseed-btn">reseed</button>
+  </div>
+</div>
+
+<script>
+
+// ─── Grid ──────────────────────────────────────────────────────────────────
+
+const GS = 256, N = GS * GS;
+const DU = 0.2097, DV = 0.1050, DT = 1.0;
+
+let f = 0.028, k = 0.062;
+
+const U  = new Float32Array(N).fill(1);
+const V  = new Float32Array(N).fill(0);
+const nU = new Float32Array(N);
+const nV = new Float32Array(N);
+
+const PREV = new Int32Array(GS);
+const NEXT = new Int32Array(GS);
+for (let i = 0; i < GS; i++) { PREV[i]=(i-1+GS)%GS; NEXT[i]=(i+1)%GS; }
+
+// ─── Named regions in parameter space ─────────────────────────────────────
+// These are anchors on the navigator pad — the known islands in the unknown sea
+
+const REGIONS = [
+  { name:'spirals',   f:0.014, k:0.047 },
+  { name:'worms',     f:0.022, k:0.059 },
+  { name:'mitosis',   f:0.028, k:0.062 },
+  { name:'labyrinth', f:0.035, k:0.060 },
+  { name:'coral',     f:0.0545,k:0.062 },
+  { name:'pulsars',   f:0.025, k:0.060 },
+  { name:'alpha',     f:0.010, k:0.047 },
+  { name:'beta',      f:0.018, k:0.055 },
+  { name:'epsilon',   f:0.040, k:0.065 },
+];
+
+// Navigator parameter ranges
+const F_MIN = 0.005, F_MAX = 0.110;
+const K_MIN = 0.038, K_MAX = 0.075;
+
+function nearestRegion(cf, ck) {
+  let best = null, bestDist = Infinity;
+  for (const r of REGIONS) {
+    // Normalize distance across the parameter space
+    const df = (cf - r.f) / (F_MAX - F_MIN);
+    const dk = (ck - r.k) / (K_MAX - K_MIN);
+    const d  = Math.sqrt(df*df + dk*dk);
+    if (d < bestDist) { bestDist = d; best = r; }
+  }
+  return { region: best, dist: bestDist };
+}
+
+// ─── Color ─────────────────────────────────────────────────────────────────
+
+function buildLUT(stops) {
+  const lut = new Uint8Array(256*3);
+  for (let i = 0; i < 256; i++) {
+    const t = i/255;
+    let s0=stops[0], s1=stops[stops.length-1];
+    for (let j=0; j<stops.length-1; j++) {
+      if (t>=stops[j].t && t<=stops[j+1].t) { s0=stops[j]; s1=stops[j+1]; break; }
+    }
+    const span = s1.t-s0.t, frac = span<0.0001?0:(t-s0.t)/span;
+    lut[i*3]  =Math.round(s0.r+(s1.r-s0.r)*frac);
+    lut[i*3+1]=Math.round(s0.g+(s1.g-s0.g)*frac);
+    lut[i*3+2]=Math.round(s0.b+(s1.b-s0.b)*frac);
+  }
+  return lut;
+}
+
+const PALETTES = {
+  abyss: buildLUT([{t:0,r:2,g:4,b:14},{t:.25,r:0,g:30,b:65},{t:.55,r:0,g:110,b:140},{t:.80,r:10,g:210,b:190},{t:1,r:180,g:255,b:250}]),
+  solar: buildLUT([{t:0,r:4,g:2,b:8},{t:.30,r:70,g:15,b:0},{t:.60,r:200,g:70,b:0},{t:.82,r:255,g:185,b:30},{t:1,r:255,g:250,b:210}]),
+  bloom: buildLUT([{t:0,r:4,g:2,b:12},{t:.30,r:35,g:8,b:75},{t:.60,r:110,g:25,b:170},{t:.82,r:195,g:90,b:255},{t:1,r:235,g:200,b:255}]),
+  ghost: buildLUT([{t:0,r:3,g:3,b:6},{t:.40,r:35,g:38,b:50},{t:.70,r:130,g:140,b:165},{t:1,r:230,g:238,b:255}]),
+};
+const DUAL = {
+  abyss: buildLUT([{t:0,r:4,g:2,b:8},{t:.5,r:120,g:40,b:0},{t:1,r:220,g:140,b:40}]),
+  solar: buildLUT([{t:0,r:4,g:2,b:12},{t:.5,r:60,g:10,b:120},{t:1,r:160,g:60,b:255}]),
+  bloom: buildLUT([{t:0,r:2,g:4,b:14},{t:.5,r:0,g:80,b:130},{t:1,r:80,g:220,b:200}]),
+  ghost: null,
+};
+
+let lut = PALETTES.abyss, dualLut = DUAL.abyss;
+let dualMode = false, currentPalKey = 'abyss';
+
+// ─── Main canvas ───────────────────────────────────────────────────────────
+
+const canvas    = document.getElementById('canvas');
+const ctx       = canvas.getContext('2d');
+canvas.width    = GS; canvas.height = GS;
+const imageData = ctx.createImageData(GS, GS);
+const pixels    = imageData.data;
+
+function render() {
+  for (let i = 0; i < N; i++) {
+    const vt = Math.min(V[i]*2.5, 1.0);
+    const li = Math.floor(vt*255)*3, p = i*4;
+    if (dualMode && dualLut) {
+      const ut = Math.min((1-U[i])*3.5, 1.0), li2 = Math.floor(ut*255)*3;
+      pixels[p]  =Math.min(255, lut[li]  +dualLut[li2]  *0.45);
+      pixels[p+1]=Math.min(255, lut[li+1]+dualLut[li2+1]*0.45);
+      pixels[p+2]=Math.min(255, lut[li+2]+dualLut[li2+2]*0.45);
+    } else {
+      pixels[p]=lut[li]; pixels[p+1]=lut[li+1]; pixels[p+2]=lut[li+2];
+    }
+    pixels[p+3]=255;
+  }
+  ctx.putImageData(imageData, 0, 0);
+}
+
+// ─── Simulation ────────────────────────────────────────────────────────────
+
+function step() {
+  for (let y=0; y<GS; y++) {
+    const row=y*GS, rowP=PREV[y]*GS, rowN=NEXT[y]*GS;
+    for (let x=0; x<GS; x++) {
+      const xP=PREV[x], xN=NEXT[x], idx=row+x;
+      const u=U[idx], v=V[idx], uvv=u*v*v;
+      const lu=.05*(U[rowP+xP]+U[rowP+xN]+U[rowN+xP]+U[rowN+xN])+.20*(U[rowP+x]+U[rowN+x]+U[row+xP]+U[row+xN])-u;
+      const lv=.05*(V[rowP+xP]+V[rowP+xN]+V[rowN+xP]+V[rowN+xN])+.20*(V[rowP+x]+V[rowN+x]+V[row+xP]+V[row+xN])-v;
+      let nu=u+DT*(DU*lu-uvv+f*(1-u)), nv=v+DT*(DV*lv+uvv-(f+k)*v);
+      nU[idx]=nu<0?0:nu>1?1:nu; nV[idx]=nv<0?0:nv>1?1:nv;
+    }
+  }
+  U.set(nU); V.set(nV);
+}
+
+// ─── Seeding ───────────────────────────────────────────────────────────────
+
+function seedBlock(cx, cy, r, noise) {
+  for (let dy=-r; dy<=r; dy++) for (let dx=-r; dx<=r; dx++) {
+    if (dx*dx+dy*dy>r*r) continue;
+    const gx=((cx+dx)%GS+GS)%GS, gy=((cy+dy)%GS+GS)%GS, idx=gy*GS+gx;
+    U[idx]=0.50+(Math.random()-.5)*(noise||.05);
+    V[idx]=0.25+(Math.random()-.5)*(noise||.05);
+  }
+}
+
+function reset(type) {
+  U.fill(1); V.fill(0);
+  if (type==='spiral') {
+    for (let i=0; i<GS; i+=14) seedBlock(i, Math.floor(i*.8+GS*.1), 3, .08);
+    seedBlock(GS*.35, GS*.45, 5, .06);
+    seedBlock(GS*.65, GS*.55, 5, .06);
+  } else {
+    for (let i=0; i<20; i++) seedBlock(20+Math.floor(Math.random()*(GS-40)), 20+Math.floor(Math.random()*(GS-40)), 3+Math.floor(Math.random()*4), .06);
+  }
+}
+
+function getSeedType() {
+  // Spirals need special seeding; detect if near spiral region
+  const df = Math.abs(f - 0.014), dk = Math.abs(k - 0.047);
+  return (df < 0.010 && dk < 0.010) ? 'spiral' : 'scatter';
+}
+
+// ─── Navigator pad ─────────────────────────────────────────────────────────
+
+const navCanvas = document.getElementById('nav-pad');
+const navCtx    = navCanvas.getContext('2d');
+const NAV_W = 136, NAV_H = 136;
+let navDragging = false;
+
+function paramToNav(pf, pk) {
+  return {
+    x: ((pf - F_MIN) / (F_MAX - F_MIN)) * NAV_W,
+    y: ((pk - K_MIN) / (K_MAX - K_MIN)) * NAV_H,
+  };
+}
+function navToParam(nx, ny) {
+  return {
+    f: Math.max(F_MIN, Math.min(F_MAX, F_MIN + (nx/NAV_W)*(F_MAX-F_MIN))),
+    k: Math.max(K_MIN, Math.min(K_MAX, K_MIN + (ny/NAV_H)*(K_MAX-K_MIN))),
+  };
+}
+
+function drawNav() {
+  navCtx.clearRect(0, 0, NAV_W, NAV_H);
+
+  // Background — very dark glass with subtle warm tint in known region
+  navCtx.fillStyle = 'rgba(0,0,10,0.82)';
+  navCtx.fillRect(0, 0, NAV_W, NAV_H);
+
+  // Soft glow around known region (lower-left quadrant is where life lives)
+  const grd = navCtx.createRadialGradient(NAV_W*0.35, NAV_H*0.7, 0, NAV_W*0.35, NAV_H*0.7, NAV_W*0.6);
+  grd.addColorStop(0, 'rgba(30,30,80,0.35)');
+  grd.addColorStop(1, 'rgba(0,0,0,0)');
+  navCtx.fillStyle = grd;
+  navCtx.fillRect(0, 0, NAV_W, NAV_H);
+
+  // Grid lines (faint)
+  navCtx.strokeStyle = 'rgba(255,255,255,0.04)';
+  navCtx.lineWidth = 1;
+  for (let g = 0; g <= 4; g++) {
+    const x = (g/4)*NAV_W, y = (g/4)*NAV_H;
+    navCtx.beginPath(); navCtx.moveTo(x,0); navCtx.lineTo(x,NAV_H); navCtx.stroke();
+    navCtx.beginPath(); navCtx.moveTo(0,y); navCtx.lineTo(NAV_W,y); navCtx.stroke();
+  }
+
+  // Axis labels
+  navCtx.fillStyle='rgba(60,60,100,0.8)'; navCtx.font='7px monospace';
+  navCtx.fillText('f →', 3, NAV_H-3);
+  navCtx.fillText('k', NAV_W-10, 10);
+  navCtx.fillText('↓', NAV_W-10, 18);
+
+  // Named region dots with labels
+  for (const r of REGIONS) {
+    const pos = paramToNav(r.f, r.k);
+    const isCurrent = (Math.abs(f-r.f)<0.003 && Math.abs(k-r.k)<0.003);
+    const {dist} = nearestRegion(f, k);
+    const isNearest = nearestRegion(f, k).region === r;
+
+    // Dot
+    navCtx.beginPath();
+    navCtx.arc(pos.x, pos.y, isCurrent?5:3, 0, Math.PI*2);
+    navCtx.fillStyle = isCurrent ? 'rgba(150,150,255,0.9)' : isNearest && dist<0.12 ? 'rgba(90,90,180,0.7)' : 'rgba(50,50,110,0.6)';
+    navCtx.fill();
+
+    // Label (only show if not too crowded)
+    navCtx.fillStyle = isNearest && dist<0.12 ? 'rgba(100,100,180,0.85)' : 'rgba(45,45,80,0.7)';
+    navCtx.font = '6px monospace';
+    const lx = pos.x + (pos.x > NAV_W*0.7 ? -navCtx.measureText(r.name).width-4 : 6);
+    const ly = pos.y + (pos.y < 10 ? 12 : -4);
+    navCtx.fillText(r.name, lx, ly);
+  }
+
+  // Current position cursor
+  const cur = paramToNav(f, k);
+  // Outer glow
+  const glow = navCtx.createRadialGradient(cur.x, cur.y, 0, cur.x, cur.y, 12);
+  glow.addColorStop(0, 'rgba(160,160,255,0.4)');
+  glow.addColorStop(1, 'rgba(0,0,0,0)');
+  navCtx.fillStyle = glow;
+  navCtx.beginPath(); navCtx.arc(cur.x, cur.y, 12, 0, Math.PI*2); navCtx.fill();
+  // Core
+  navCtx.beginPath(); navCtx.arc(cur.x, cur.y, 4, 0, Math.PI*2);
+  navCtx.fillStyle = 'rgba(200,200,255,0.95)'; navCtx.fill();
+  // Crosshair
+  navCtx.strokeStyle='rgba(200,200,255,0.3)'; navCtx.lineWidth=0.5;
+  navCtx.beginPath(); navCtx.moveTo(cur.x,0); navCtx.lineTo(cur.x,NAV_H); navCtx.stroke();
+  navCtx.beginPath(); navCtx.moveTo(0,cur.y); navCtx.lineTo(NAV_W,cur.y); navCtx.stroke();
+
+  // Update text readout
+  document.getElementById('nav-f').textContent = 'f ' + f.toFixed(4);
+  document.getElementById('nav-k').textContent = 'k ' + k.toFixed(4);
+  const {region, dist} = nearestRegion(f, k);
+  document.getElementById('nav-region').textContent = dist < 0.10 ? region.name : dist < 0.18 ? 'near: '+region.name : '— unknown —';
+}
+
+function setNavPosition(nx, ny) {
+  const p = navToParam(nx, ny);
+  f = p.f; k = p.k;
+  drawNav();
+}
+
+navCanvas.addEventListener('pointerdown', e => {
+  e.stopPropagation();
+  navDragging = true;
+  navCanvas.setPointerCapture(e.pointerId);
+  const r = navCanvas.getBoundingClientRect();
+  setNavPosition(
+    (e.clientX-r.left)*(NAV_W/r.width),
+    (e.clientY-r.top)*(NAV_H/r.height)
+  );
+}, true);
+navCanvas.addEventListener('pointermove', e => {
+  e.stopPropagation();
+  if (!navDragging) return;
+  const r = navCanvas.getBoundingClientRect();
+  setNavPosition(
+    (e.clientX-r.left)*(NAV_W/r.width),
+    (e.clientY-r.top)*(NAV_H/r.height)
+  );
+}, true);
+navCanvas.addEventListener('pointerup',    e => { e.stopPropagation(); navDragging=false; }, true);
+navCanvas.addEventListener('pointerleave', e => { e.stopPropagation(); }, true);
+
+// ─── Painting ─────────────────────────────────────────────────────────────
+
+let painting=false, brushMode='add', brushSize=7;
+
+function canvasToGrid(cx, cy) {
+  const r=canvas.getBoundingClientRect();
+  return { gx:Math.floor((cx-r.left)/r.width*GS), gy:Math.floor((cy-r.top)/r.height*GS) };
+}
+function paintAt(gx, gy) {
+  for (let dy=-brushSize; dy<=brushSize; dy++) for (let dx=-brushSize; dx<=brushSize; dx++) {
+    if (dx*dx+dy*dy>brushSize*brushSize) continue;
+    const px=((gx+dx)%GS+GS)%GS, py=((gy+dy)%GS+GS)%GS, idx=py*GS+px;
+    if (brushMode==='add') { U[idx]=0.50+(Math.random()-.5)*.08; V[idx]=0.25+(Math.random()-.5)*.08; }
+    else                   { U[idx]=1.0; V[idx]=0.0; }
+  }
+}
+
+canvas.addEventListener('pointerdown', e => {
+  if (!started||navDragging) return;
+  painting=true; canvas.setPointerCapture(e.pointerId);
+  const g=canvasToGrid(e.clientX,e.clientY); paintAt(g.gx,g.gy);
+});
+canvas.addEventListener('pointermove', e => {
+  if (!painting) return;
+  const g=canvasToGrid(e.clientX,e.clientY); paintAt(g.gx,g.gy);
+});
+canvas.addEventListener('pointerup',    ()=>{ painting=false; });
+canvas.addEventListener('pointerleave', ()=>{ painting=false; });
+
+// ─── Sound ────────────────────────────────────────────────────────────────
+
+let audioCtx=null, masterGain=null, oscs=[], soundOn=true, soundReady=false, volumeLevel=0.65;
+
+function initSound() {
+  if (audioCtx) return;
+  audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+  masterGain=audioCtx.createGain(); masterGain.gain.value=0; masterGain.connect(audioCtx.destination);
+  [110,165,220].forEach((freq,i) => {
+    const osc=audioCtx.createOscillator(), g=audioCtx.createGain();
+    osc.type='sine'; osc.frequency.value=freq; g.gain.value=[.40,.30,.25][i];
+    osc.connect(g); g.connect(masterGain); osc.start(); oscs.push(osc);
+  });
+  soundReady=true;
+}
+function sampleRegion(x0,y0,w,h) {
+  let s=0,c=0;
+  for (let y=y0;y<y0+h;y+=5) for (let x=x0;x<x0+w;x+=5) { s+=V[y*GS+x]; c++; }
+  return c?s/c:0;
+}
+let lastSnd=0;
+function updateSound(ts) {
+  if (!soundReady||!audioCtx||ts-lastSnd<200) return; lastSnd=ts;
+  const now=audioCtx.currentTime;
+  const r1=sampleRegion(0,0,GS/2,GS/2), r2=sampleRegion(GS/4,GS/4,GS/2,GS/2), r3=sampleRegion(GS/2,GS/2,GS/2,GS/2);
+  const mean=(r1+r2+r3)/3;
+  oscs[0].frequency.setTargetAtTime(110+r1*180,now,1.0);
+  oscs[1].frequency.setTargetAtTime(165+r2*110,now,1.0);
+  oscs[2].frequency.setTargetAtTime(220+r3*80, now,1.0);
+  masterGain.gain.setTargetAtTime(soundOn?volumeLevel*Math.sqrt(Math.min(mean/.08,1))*.18:0, now, 0.8);
+}
+
+// ─── Loop ──────────────────────────────────────────────────────────────────
+
+let started=false, paused=false, stepsFrame=4;
+
+function loop(ts) {
+  if (!paused) {
+    for (let s=0; s<stepsFrame; s++) step();
+    render();
+    updateSound(ts);
+    drawNav();
+  }
+  requestAnimationFrame(loop);
+}
+
+// ─── Spacebar to pause ─────────────────────────────────────────────────────
+
+document.addEventListener('keydown', e => {
+  if (e.code==='Space' && started) {
+    e.preventDefault();
+    paused=!paused;
+    const hint=document.getElementById('pause-hint');
+    const btn=document.getElementById('pause-btn');
+    hint.classList.toggle('showing', paused);
+    btn.classList.toggle('active', paused);
+    btn.textContent = paused ? 'resume' : 'pause';
+  }
+});
+
+// ─── Boot ──────────────────────────────────────────────────────────────────
+
+reset('scatter');
+for (let i=0; i<300; i++) step();
+render(); drawNav();
+
+// ─── Title card ────────────────────────────────────────────────────────────
+
+document.getElementById('title-card').addEventListener('pointerdown', () => {
+  document.getElementById('title-card').classList.add('fade-out');
+  document.getElementById('controls').classList.add('visible');
+  document.getElementById('nav-wrap').classList.add('visible');
+  initSound(); audioCtx.resume();
+  started=true;
+  requestAnimationFrame(loop);
+  setTimeout(()=>{ document.getElementById('title-card').style.display='none'; }, 1800);
+}, { once:true });
+
+// ─── Controls ──────────────────────────────────────────────────────────────
+
+document.querySelectorAll('[data-palette]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('[data-palette]').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    currentPalKey=btn.dataset.palette;
+    lut=PALETTES[currentPalKey]; dualLut=DUAL[currentPalKey];
+  });
+});
+document.getElementById('dual-btn').addEventListener('click', ()=>{
+  dualMode=!dualMode;
+  document.getElementById('dual-btn').classList.toggle('active',dualMode);
+});
+document.getElementById('add-btn').addEventListener('click',  ()=>{ brushMode='add';  document.getElementById('add-btn').classList.add('active'); document.getElementById('sub-btn').classList.remove('active'); });
+document.getElementById('sub-btn').addEventListener('click',  ()=>{ brushMode='sub';  document.getElementById('sub-btn').classList.add('active'); document.getElementById('add-btn').classList.remove('active'); });
+document.getElementById('brush-slider').addEventListener('input',e=>{ brushSize=parseInt(e.target.value); document.getElementById('brush-val').textContent=brushSize; });
+document.getElementById('speed-slider').addEventListener('input',e=>{ stepsFrame=parseInt(e.target.value); document.getElementById('speed-val').textContent=stepsFrame; });
+document.getElementById('vol-slider').addEventListener('input',e=>{ volumeLevel=e.target.value/100; document.getElementById('vol-val').textContent=e.target.value+'%'; });
+document.getElementById('sound-btn').addEventListener('click',()=>{
+  soundOn=!soundOn;
+  document.getElementById('sound-btn').classList.toggle('active',soundOn);
+  document.getElementById('sound-btn').textContent=soundOn?'on':'off';
+  if (!soundOn&&masterGain) masterGain.gain.setTargetAtTime(0,audioCtx.currentTime,.3);
+});
+document.getElementById('pause-btn').addEventListener('click',()=>{
+  document.getElementById('pause-btn').dispatchEvent(new KeyboardEvent('keydown'));
+  paused=!paused;
+  const hint=document.getElementById('pause-hint');
+  hint.classList.toggle('showing',paused);
+  document.getElementById('pause-btn').classList.toggle('active',paused);
+  document.getElementById('pause-btn').textContent=paused?'resume':'pause';
+});
+document.getElementById('reseed-btn').addEventListener('click',()=>{
+  reset(getSeedType());
+  for (let i=0; i<200; i++) step();
+});
+
+</script>
+</body>
+</html>

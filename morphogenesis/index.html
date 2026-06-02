@@ -12,26 +12,119 @@
       image-rendering:auto; cursor:crosshair;
     }
 
-    /* ── Navigator pad ───────────────────────────────────────── */
+    /* ── Navigator panel ──────────────────────────────────────────── */
     #nav-wrap {
       position:fixed; top:18px; right:18px; z-index:15;
-      display:flex; flex-direction:column; align-items:flex-end; gap:5px;
+      display:flex; flex-direction:column;
+      background:rgba(0,0,12,0.97);
+      border:1px solid rgba(255,255,255,0.09);
+      border-radius:7px; overflow:hidden;
       opacity:0; transition:opacity 1.8s ease;
+      box-shadow:0 4px 32px rgba(0,0,0,0.6);
     }
     #nav-wrap.visible { opacity:1; }
-    #nav-pad {
-      width:136px; height:136px;
-      border:1px solid rgba(255,255,255,0.08);
-      border-radius:4px; cursor:crosshair;
-      display:block;
-    }
-    #nav-info {
-      font-family:monospace; font-size:8px; letter-spacing:1px;
-      color:#44446A; text-align:right; line-height:1.6;
-    }
-    #nav-region { color:#6666AA; }
 
-    /* ── Title card ─────────────────────────────────────────── */
+    #nav-header {
+      display:flex; align-items:center; justify-content:space-between;
+      padding:7px 11px 6px;
+      cursor:grab; background:rgba(255,255,255,0.025);
+      border-bottom:1px solid rgba(255,255,255,0.06);
+      flex-shrink:0;
+    }
+    #nav-header:active { cursor:grabbing; }
+    #nav-title {
+      font-family:monospace; font-size:9px; letter-spacing:2.5px;
+      color:#55558A; text-transform:uppercase;
+    }
+    #nav-help-btn {
+      font-family:monospace; font-size:10px; letter-spacing:0;
+      color:#44446A; background:rgba(60,60,120,0.2);
+      border:1px solid rgba(80,80,160,0.25);
+      border-radius:50%; width:20px; height:20px;
+      cursor:pointer; display:flex; align-items:center; justify-content:center;
+      transition:color .2s, border-color .2s, background .2s;
+      flex-shrink:0;
+    }
+    #nav-help-btn:hover  { color:#8888CC; border-color:rgba(100,100,200,0.5); background:rgba(60,60,120,0.4); }
+    #nav-help-btn.active { color:#AAAAEE; border-color:rgba(120,120,240,0.7); background:rgba(30,30,80,0.7); }
+
+    #nav-pad {
+      width:280px; height:280px;
+      display:block; cursor:crosshair;
+      flex-shrink:0;
+    }
+
+    #nav-info {
+      padding:9px 12px 10px;
+      border-top:1px solid rgba(255,255,255,0.06);
+      background:rgba(0,0,8,0.4);
+    }
+    #nav-coords {
+      font-family:monospace; font-size:11px; letter-spacing:1.5px;
+      color:#5A5A8A; line-height:1;
+    }
+    #nav-region {
+      font-family:monospace; font-size:12px; letter-spacing:1px;
+      color:#7777BB; margin-top:5px; display:block;
+    }
+
+    /* ── Tutorial card ─────────────────────────────────────────────── */
+    #tutorial {
+      position:fixed; top:18px; left:18px; z-index:14;
+      width:320px;
+      max-height:calc(100vh - 100px);
+      overflow-y:auto;
+      background:rgba(0,0,14,0.88);
+      backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px);
+      border:1px solid rgba(255,255,255,0.07);
+      border-radius:7px;
+      opacity:0; pointer-events:none;
+      transform:translateX(-10px);
+      transition:opacity 0.3s ease, transform 0.3s ease;
+      box-shadow:0 8px 40px rgba(0,0,0,0.75), 0 1px 0 rgba(255,255,255,0.04) inset;
+    }
+    #tutorial.visible {
+      opacity:1; pointer-events:auto; transform:translateX(0);
+    }
+    #tutorial-header {
+      display:flex; align-items:center; justify-content:space-between;
+      padding:12px 15px 10px;
+      border-bottom:1px solid rgba(255,255,255,0.07);
+      background:rgba(255,255,255,0.025);
+    }
+    #tutorial-header span {
+      font-family:monospace; font-size:10px; letter-spacing:2.5px;
+      color:#6666AA; text-transform:uppercase;
+    }
+    #tutorial-close {
+      font-family:monospace; font-size:14px; color:#44446A;
+      background:none; border:none; cursor:pointer; padding:0 3px;
+      transition:color .2s; line-height:1;
+    }
+    #tutorial-close:hover { color:#9999CC; }
+    #tutorial-body {
+      padding:18px 18px 22px;
+    }
+    .t-section { margin-bottom:22px; }
+    .t-section:last-child { margin-bottom:0; }
+    .t-head {
+      font-family:monospace; font-size:10px; letter-spacing:2px;
+      color:#6666BB; text-transform:uppercase; margin-bottom:9px;
+      display:block; border-bottom:1px solid rgba(80,80,160,0.18);
+      padding-bottom:5px;
+    }
+    .t-body {
+      font-family:monospace; font-size:11.5px; letter-spacing:0.3px;
+      color:#7070A0; line-height:2.0;
+    }
+    .t-body em { color:#9999CC; font-style:normal; font-weight:bold; }
+    .t-body .dim { color:#484868; }
+    .t-body .def { color:#5A5A88; font-size:10.5px; line-height:1.8; }
+    .region-entry { margin-bottom:10px; }
+    .region-name { color:#9999CC; font-size:11.5px; }
+    .region-desc { color:#606088; font-size:10.5px; line-height:1.75; display:block; margin-top:1px; }
+
+    /* ── Title card ─────────────────────────────────────────────── */
     #title-card {
       position:fixed; inset:0;
       display:flex; flex-direction:column; align-items:center; justify-content:center;
@@ -42,7 +135,7 @@
     #title-card .hint { color:#282838; font-size:10px; letter-spacing:2px; text-align:center; line-height:2; }
     #title-card.fade-out { opacity:0; pointer-events:none; }
 
-    /* ── Controls strip ─────────────────────────────────────── */
+    /* ── Controls strip ─────────────────────────────────────────── */
     #controls {
       position:fixed; bottom:0; left:0; right:0;
       display:flex; flex-wrap:wrap; align-items:center; justify-content:center;
@@ -85,6 +178,11 @@
       pointer-events:none; z-index:5; transition:opacity 0.3s;
     }
     #pause-hint.showing { color:#5555AA; }
+
+    /* scrollbar for tutorial */
+    #tutorial::-webkit-scrollbar { width:3px; }
+    #tutorial::-webkit-scrollbar-track { background:transparent; }
+    #tutorial::-webkit-scrollbar-thumb { background:rgba(80,80,160,0.3); border-radius:2px; }
   </style>
 </head>
 <body>
@@ -93,11 +191,122 @@
 <div id="info">morphogenesis</div>
 <div id="pause-hint">paused — space to resume</div>
 
+<!-- ── Tutorial card ───────────────────────────────────────────────── -->
+<div id="tutorial">
+  <div id="tutorial-header">
+    <span>how this works</span>
+    <button id="tutorial-close">×</button>
+  </div>
+  <div id="tutorial-body">
+
+    <div class="t-section">
+      <span class="t-head">what you're watching</span>
+      <div class="t-body">
+        Two chemicals share this field. Call them <em>U</em> and <em>V</em>.<br><br>
+        <em>U</em> is food — it flows in constantly from outside the system. <em>V</em> is life — it grows wherever U is present, consuming it in the process.<br><br>
+        Where V concentrates, U depletes. Where U recovers, V follows. From this tension, every pattern here emerges.
+      </div>
+    </div>
+
+    <div class="t-section">
+      <span class="t-head">how to play</span>
+      <div class="t-body">
+        <em>Drag the map</em> (top right) to change chemistry in real time.<br>
+        <em>Paint the field</em> to seed new life into existing patterns.<br>
+        <em>Erase</em> to destroy and let something else grow.<br>
+        <em>Reseed</em> starts fresh chemistry at the current location.<br>
+        <em>Speed</em> controls how fast time moves.<br><br>
+        The field never stops. You're not watching a simulation — you're in it.
+      </div>
+    </div>
+
+    <div class="t-section">
+      <span class="t-head">f — the feed rate</span>
+      <div class="t-body">
+        How fast U enters the system from outside.<br><br>
+        <em>Low f:</em> sparse, delicate. Thin branching, tentative spirals.<br>
+        <em>High f:</em> dense, pushing. Rapid growth competing for space.<br><br>
+        <span class="dim">Moving left on the map decreases f.</span>
+      </div>
+    </div>
+
+    <div class="t-section">
+      <span class="t-head">k — the kill rate</span>
+      <div class="t-body">
+        How fast V decays and disappears.<br><br>
+        <em>Low k:</em> V persists. Patterns stabilize and hold their shape.<br>
+        <em>High k:</em> V dies fast. Forms become unstable, fragment, dissolve.<br><br>
+        <span class="dim">Moving down on the map increases k.</span>
+      </div>
+    </div>
+
+    <div class="t-section">
+      <span class="t-head">the map</span>
+      <div class="t-body">
+        Each point is a different version of the rules — same chemicals, different balance of f and k.<br><br>
+        <em>X axis →</em> feed rate (f)<br>
+        <em>Y axis ↓</em> kill rate (k)<br><br>
+        Named dots are regions people have studied. Most of the space has never been explored. The transitions between regions are the most dramatic moments — forms caught between what they were and what they're becoming.
+      </div>
+    </div>
+
+    <div class="t-section">
+      <span class="t-head">the named regions</span>
+      <div class="t-body">
+
+        <div class="region-entry">
+          <span class="region-name">spirals</span>
+          <span class="region-desc">Rotating arms that self-organize and persist indefinitely. The chemistry finds a rotational equilibrium and holds it. Like tiny galaxies that never wind down.</span>
+        </div>
+
+        <div class="region-entry">
+          <span class="region-name">worms</span>
+          <span class="region-desc">Writhing filaments in constant motion — they never settle. The pattern is stable in form but restless in position, always reaching, always retreating.</span>
+        </div>
+
+        <div class="region-entry">
+          <span class="region-name">mitosis</span>
+          <span class="region-desc">Spots that spontaneously divide, exactly like biological cell division. One spot becomes two. Two become four. Named after the real process — this is how Alan Turing suspected skin patterns actually form.</span>
+        </div>
+
+        <div class="region-entry">
+          <span class="region-name">labyrinth</span>
+          <span class="region-desc">A branching maze that grows and then freezes. Once the labyrinth forms it holds its shape — a permanent record carved by chemistry. No two are alike.</span>
+        </div>
+
+        <div class="region-entry">
+          <span class="region-name">coral</span>
+          <span class="region-desc">Dense fractal branching, identical in structure to real reef coral and ice crystals. The branching angle is determined entirely by f and k — change either slightly and the whole geometry shifts.</span>
+        </div>
+
+        <div class="region-entry">
+          <span class="region-name">pulsars</span>
+          <span class="region-desc">Oscillating structures with a chemical heartbeat. The pattern expands and contracts rhythmically. Found in actual chemical reactions in labs — the Belousov–Zhabotinsky reaction looks exactly like this.</span>
+        </div>
+
+        <div class="region-entry">
+          <span class="region-name">alpha · beta · epsilon</span>
+          <span class="region-desc">Transitional zones between the named regions. Patterns here are caught mid-transformation — not fully one thing or another. Often the most dramatic and surprising territory to explore.</span>
+        </div>
+
+        <span class="dim">These are just the ones with names. Most of the map has never been explored.</span>
+      </div>
+    </div>
+
+  </div>
+</div>
+
 <!-- ── 2D Parameter Navigator ──────────────────────────────────── -->
 <div id="nav-wrap">
-  <canvas id="nav-pad" width="136" height="136"></canvas>
+  <div id="nav-header">
+    <span id="nav-title">parameter space</span>
+    <button id="nav-help-btn">?</button>
+  </div>
+  <canvas id="nav-pad" width="280" height="280"></canvas>
   <div id="nav-info">
-    <span id="nav-f">f 0.028</span> · <span id="nav-k">k 0.062</span><br>
+    <div id="nav-coords">
+      <span id="nav-f">f 0.0280</span><span style="color:#333355"> · </span><span id="nav-k">k 0.0620</span>
+    </div>
     <span id="nav-region">mitosis</span>
   </div>
 </div>
@@ -168,8 +377,7 @@ const PREV = new Int32Array(GS);
 const NEXT = new Int32Array(GS);
 for (let i = 0; i < GS; i++) { PREV[i]=(i-1+GS)%GS; NEXT[i]=(i+1)%GS; }
 
-// ─── Named regions in parameter space ─────────────────────────────────────
-// These are anchors on the navigator pad — the known islands in the unknown sea
+// ─── Named regions ─────────────────────────────────────────────────────────
 
 const REGIONS = [
   { name:'spirals',   f:0.014, k:0.047 },
@@ -183,14 +391,12 @@ const REGIONS = [
   { name:'epsilon',   f:0.040, k:0.065 },
 ];
 
-// Navigator parameter ranges
 const F_MIN = 0.005, F_MAX = 0.110;
 const K_MIN = 0.038, K_MAX = 0.075;
 
 function nearestRegion(cf, ck) {
   let best = null, bestDist = Infinity;
   for (const r of REGIONS) {
-    // Normalize distance across the parameter space
     const df = (cf - r.f) / (F_MAX - F_MIN);
     const dk = (ck - r.k) / (K_MAX - K_MIN);
     const d  = Math.sqrt(df*df + dk*dk);
@@ -298,7 +504,6 @@ function reset(type) {
 }
 
 function getSeedType() {
-  // Spirals need special seeding; detect if near spiral region
   const df = Math.abs(f - 0.014), dk = Math.abs(k - 0.047);
   return (df < 0.010 && dk < 0.010) ? 'spiral' : 'scatter';
 }
@@ -307,7 +512,7 @@ function getSeedType() {
 
 const navCanvas = document.getElementById('nav-pad');
 const navCtx    = navCanvas.getContext('2d');
-const NAV_W = 136, NAV_H = 136;
+const NAV_W = 280, NAV_H = 280;
 let navDragging = false;
 
 function paramToNav(pf, pk) {
@@ -326,74 +531,100 @@ function navToParam(nx, ny) {
 function drawNav() {
   navCtx.clearRect(0, 0, NAV_W, NAV_H);
 
-  // Background — very dark glass with subtle warm tint in known region
-  navCtx.fillStyle = 'rgba(0,0,10,0.82)';
+  // Background
+  navCtx.fillStyle = 'rgba(0,0,10,0.0)';
   navCtx.fillRect(0, 0, NAV_W, NAV_H);
 
-  // Soft glow around known region (lower-left quadrant is where life lives)
-  const grd = navCtx.createRadialGradient(NAV_W*0.35, NAV_H*0.7, 0, NAV_W*0.35, NAV_H*0.7, NAV_W*0.6);
-  grd.addColorStop(0, 'rgba(30,30,80,0.35)');
+  // Soft glow in the populated region (lower-left quadrant — life lives here)
+  const grd = navCtx.createRadialGradient(NAV_W*0.35, NAV_H*0.7, 0, NAV_W*0.35, NAV_H*0.7, NAV_W*0.65);
+  grd.addColorStop(0, 'rgba(25,25,70,0.5)');
   grd.addColorStop(1, 'rgba(0,0,0,0)');
   navCtx.fillStyle = grd;
   navCtx.fillRect(0, 0, NAV_W, NAV_H);
 
-  // Grid lines (faint)
-  navCtx.strokeStyle = 'rgba(255,255,255,0.04)';
+  // Grid lines
+  navCtx.strokeStyle = 'rgba(255,255,255,0.045)';
   navCtx.lineWidth = 1;
-  for (let g = 0; g <= 4; g++) {
-    const x = (g/4)*NAV_W, y = (g/4)*NAV_H;
+  for (let g = 0; g <= 5; g++) {
+    const x = (g/5)*NAV_W, y = (g/5)*NAV_H;
     navCtx.beginPath(); navCtx.moveTo(x,0); navCtx.lineTo(x,NAV_H); navCtx.stroke();
     navCtx.beginPath(); navCtx.moveTo(0,y); navCtx.lineTo(NAV_W,y); navCtx.stroke();
   }
 
   // Axis labels
-  navCtx.fillStyle='rgba(60,60,100,0.8)'; navCtx.font='7px monospace';
-  navCtx.fillText('f →', 3, NAV_H-3);
-  navCtx.fillText('k', NAV_W-10, 10);
-  navCtx.fillText('↓', NAV_W-10, 18);
+  navCtx.font = '9px monospace';
+  navCtx.fillStyle = 'rgba(60,60,100,0.75)';
+  navCtx.fillText('f →', 5, NAV_H - 5);
+  navCtx.fillText('k', NAV_W - 12, 12);
+  navCtx.fillText('↓', NAV_W - 12, 22);
 
-  // Named region dots with labels
+  // Min/max hints at corners (very subtle)
+  navCtx.font = '7px monospace';
+  navCtx.fillStyle = 'rgba(40,40,70,0.6)';
+  navCtx.fillText(F_MIN.toFixed(3), 5, 11);
+  navCtx.textAlign = 'right';
+  navCtx.fillText(F_MAX.toFixed(3), NAV_W - 5, NAV_H - 5);
+  navCtx.textAlign = 'left';
+
+  // Named region dots
+  const { region: nearR, dist: nearD } = nearestRegion(f, k);
   for (const r of REGIONS) {
     const pos = paramToNav(r.f, r.k);
-    const isCurrent = (Math.abs(f-r.f)<0.003 && Math.abs(k-r.k)<0.003);
-    const {dist} = nearestRegion(f, k);
-    const isNearest = nearestRegion(f, k).region === r;
+    const isNearest = r === nearR;
+    const isNear = isNearest && nearD < 0.12;
+
+    // Soft halo for nearest region
+    if (isNear) {
+      const halo = navCtx.createRadialGradient(pos.x, pos.y, 0, pos.x, pos.y, 18);
+      halo.addColorStop(0, 'rgba(80,80,180,0.25)');
+      halo.addColorStop(1, 'rgba(0,0,0,0)');
+      navCtx.fillStyle = halo;
+      navCtx.beginPath(); navCtx.arc(pos.x, pos.y, 18, 0, Math.PI*2); navCtx.fill();
+    }
 
     // Dot
     navCtx.beginPath();
-    navCtx.arc(pos.x, pos.y, isCurrent?5:3, 0, Math.PI*2);
-    navCtx.fillStyle = isCurrent ? 'rgba(150,150,255,0.9)' : isNearest && dist<0.12 ? 'rgba(90,90,180,0.7)' : 'rgba(50,50,110,0.6)';
+    navCtx.arc(pos.x, pos.y, isNear ? 6 : 4, 0, Math.PI*2);
+    navCtx.fillStyle = isNear ? 'rgba(140,140,240,0.85)' : 'rgba(55,55,120,0.65)';
     navCtx.fill();
 
-    // Label (only show if not too crowded)
-    navCtx.fillStyle = isNearest && dist<0.12 ? 'rgba(100,100,180,0.85)' : 'rgba(45,45,80,0.7)';
-    navCtx.font = '6px monospace';
-    const lx = pos.x + (pos.x > NAV_W*0.7 ? -navCtx.measureText(r.name).width-4 : 6);
-    const ly = pos.y + (pos.y < 10 ? 12 : -4);
+    // Label
+    navCtx.font = isNear ? '9px monospace' : '8px monospace';
+    navCtx.fillStyle = isNear ? 'rgba(120,120,200,0.9)' : 'rgba(50,50,90,0.75)';
+    const labelW = navCtx.measureText(r.name).width;
+    const lx = pos.x > NAV_W * 0.75 ? pos.x - labelW - 7 : pos.x + 8;
+    const ly = pos.y < 14 ? pos.y + 14 : pos.y - 5;
     navCtx.fillText(r.name, lx, ly);
   }
 
   // Current position cursor
   const cur = paramToNav(f, k);
+
+  // Crosshair lines
+  navCtx.strokeStyle = 'rgba(180,180,255,0.18)';
+  navCtx.lineWidth = 0.8;
+  navCtx.setLineDash([3, 5]);
+  navCtx.beginPath(); navCtx.moveTo(cur.x, 0); navCtx.lineTo(cur.x, NAV_H); navCtx.stroke();
+  navCtx.beginPath(); navCtx.moveTo(0, cur.y); navCtx.lineTo(NAV_W, cur.y); navCtx.stroke();
+  navCtx.setLineDash([]);
+
   // Outer glow
-  const glow = navCtx.createRadialGradient(cur.x, cur.y, 0, cur.x, cur.y, 12);
-  glow.addColorStop(0, 'rgba(160,160,255,0.4)');
+  const glow = navCtx.createRadialGradient(cur.x, cur.y, 0, cur.x, cur.y, 20);
+  glow.addColorStop(0, 'rgba(160,160,255,0.5)');
   glow.addColorStop(1, 'rgba(0,0,0,0)');
   navCtx.fillStyle = glow;
-  navCtx.beginPath(); navCtx.arc(cur.x, cur.y, 12, 0, Math.PI*2); navCtx.fill();
-  // Core
-  navCtx.beginPath(); navCtx.arc(cur.x, cur.y, 4, 0, Math.PI*2);
-  navCtx.fillStyle = 'rgba(200,200,255,0.95)'; navCtx.fill();
-  // Crosshair
-  navCtx.strokeStyle='rgba(200,200,255,0.3)'; navCtx.lineWidth=0.5;
-  navCtx.beginPath(); navCtx.moveTo(cur.x,0); navCtx.lineTo(cur.x,NAV_H); navCtx.stroke();
-  navCtx.beginPath(); navCtx.moveTo(0,cur.y); navCtx.lineTo(NAV_W,cur.y); navCtx.stroke();
+  navCtx.beginPath(); navCtx.arc(cur.x, cur.y, 20, 0, Math.PI*2); navCtx.fill();
 
-  // Update text readout
+  // Core dot
+  navCtx.beginPath(); navCtx.arc(cur.x, cur.y, 5, 0, Math.PI*2);
+  navCtx.fillStyle = 'rgba(210,210,255,0.98)'; navCtx.fill();
+
+  // Update readout
   document.getElementById('nav-f').textContent = 'f ' + f.toFixed(4);
   document.getElementById('nav-k').textContent = 'k ' + k.toFixed(4);
-  const {region, dist} = nearestRegion(f, k);
-  document.getElementById('nav-region').textContent = dist < 0.10 ? region.name : dist < 0.18 ? 'near: '+region.name : '— unknown —';
+  const { region, dist } = nearestRegion(f, k);
+  document.getElementById('nav-region').textContent =
+    dist < 0.10 ? region.name : dist < 0.18 ? 'near: ' + region.name : '— unknown —';
 }
 
 function setNavPosition(nx, ny) {
@@ -408,8 +639,8 @@ navCanvas.addEventListener('pointerdown', e => {
   navCanvas.setPointerCapture(e.pointerId);
   const r = navCanvas.getBoundingClientRect();
   setNavPosition(
-    (e.clientX-r.left)*(NAV_W/r.width),
-    (e.clientY-r.top)*(NAV_H/r.height)
+    (e.clientX - r.left) * (NAV_W / r.width),
+    (e.clientY - r.top)  * (NAV_H / r.height)
   );
 }, true);
 navCanvas.addEventListener('pointermove', e => {
@@ -417,20 +648,72 @@ navCanvas.addEventListener('pointermove', e => {
   if (!navDragging) return;
   const r = navCanvas.getBoundingClientRect();
   setNavPosition(
-    (e.clientX-r.left)*(NAV_W/r.width),
-    (e.clientY-r.top)*(NAV_H/r.height)
+    (e.clientX - r.left) * (NAV_W / r.width),
+    (e.clientY - r.top)  * (NAV_H / r.height)
   );
 }, true);
-navCanvas.addEventListener('pointerup',    e => { e.stopPropagation(); navDragging=false; }, true);
+navCanvas.addEventListener('pointerup',    e => { e.stopPropagation(); navDragging = false; }, true);
 navCanvas.addEventListener('pointerleave', e => { e.stopPropagation(); }, true);
+
+// ─── Draggable nav panel ───────────────────────────────────────────────────
+
+const navWrap   = document.getElementById('nav-wrap');
+const navHeader = document.getElementById('nav-header');
+let navMoveActive = false, navDragOX = 0, navDragOY = 0;
+let navPosX = null, navPosY = null;
+
+navHeader.addEventListener('pointerdown', e => {
+  if (e.target.id === 'nav-help-btn') return;
+  navMoveActive = true;
+  navHeader.setPointerCapture(e.pointerId);
+  const rect = navWrap.getBoundingClientRect();
+  if (navPosX === null) {
+    navPosX = rect.left;
+    navPosY = rect.top;
+    navWrap.style.right = 'auto';
+    navWrap.style.left  = navPosX + 'px';
+    navWrap.style.top   = navPosY + 'px';
+  }
+  navDragOX = e.clientX - navPosX;
+  navDragOY = e.clientY - navPosY;
+  e.preventDefault();
+});
+
+navHeader.addEventListener('pointermove', e => {
+  if (!navMoveActive) return;
+  navPosX = e.clientX - navDragOX;
+  navPosY = e.clientY - navDragOY;
+  navPosX = Math.max(0, Math.min(window.innerWidth  - navWrap.offsetWidth,  navPosX));
+  navPosY = Math.max(0, Math.min(window.innerHeight - navWrap.offsetHeight, navPosY));
+  navWrap.style.left = navPosX + 'px';
+  navWrap.style.top  = navPosY + 'px';
+});
+
+navHeader.addEventListener('pointerup', () => { navMoveActive = false; });
+
+// ─── Tutorial toggle ───────────────────────────────────────────────────────
+
+let tutorialOpen = false;
+const tutorialEl = document.getElementById('tutorial');
+
+document.getElementById('nav-help-btn').addEventListener('click', () => {
+  tutorialOpen = !tutorialOpen;
+  tutorialEl.classList.toggle('visible', tutorialOpen);
+  document.getElementById('nav-help-btn').classList.toggle('active', tutorialOpen);
+});
+document.getElementById('tutorial-close').addEventListener('click', () => {
+  tutorialOpen = false;
+  tutorialEl.classList.remove('visible');
+  document.getElementById('nav-help-btn').classList.remove('active');
+});
 
 // ─── Painting ─────────────────────────────────────────────────────────────
 
-let painting=false, brushMode='add', brushSize=7;
+let painting = false, brushMode = 'add', brushSize = 7;
 
 function canvasToGrid(cx, cy) {
-  const r=canvas.getBoundingClientRect();
-  return { gx:Math.floor((cx-r.left)/r.width*GS), gy:Math.floor((cy-r.top)/r.height*GS) };
+  const r = canvas.getBoundingClientRect();
+  return { gx: Math.floor((cx-r.left)/r.width*GS), gy: Math.floor((cy-r.top)/r.height*GS) };
 }
 function paintAt(gx, gy) {
   for (let dy=-brushSize; dy<=brushSize; dy++) for (let dx=-brushSize; dx<=brushSize; dx++) {
@@ -443,15 +726,15 @@ function paintAt(gx, gy) {
 
 canvas.addEventListener('pointerdown', e => {
   if (!started||navDragging) return;
-  painting=true; canvas.setPointerCapture(e.pointerId);
-  const g=canvasToGrid(e.clientX,e.clientY); paintAt(g.gx,g.gy);
+  painting = true; canvas.setPointerCapture(e.pointerId);
+  const g = canvasToGrid(e.clientX, e.clientY); paintAt(g.gx, g.gy);
 });
 canvas.addEventListener('pointermove', e => {
   if (!painting) return;
-  const g=canvasToGrid(e.clientX,e.clientY); paintAt(g.gx,g.gy);
+  const g = canvasToGrid(e.clientX, e.clientY); paintAt(g.gx, g.gy);
 });
-canvas.addEventListener('pointerup',    ()=>{ painting=false; });
-canvas.addEventListener('pointerleave', ()=>{ painting=false; });
+canvas.addEventListener('pointerup',    () => { painting = false; });
+canvas.addEventListener('pointerleave', () => { painting = false; });
 
 // ─── Sound ────────────────────────────────────────────────────────────────
 
@@ -459,29 +742,29 @@ let audioCtx=null, masterGain=null, oscs=[], soundOn=true, soundReady=false, vol
 
 function initSound() {
   if (audioCtx) return;
-  audioCtx=new (window.AudioContext||window.webkitAudioContext)();
-  masterGain=audioCtx.createGain(); masterGain.gain.value=0; masterGain.connect(audioCtx.destination);
+  audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+  masterGain = audioCtx.createGain(); masterGain.gain.value=0; masterGain.connect(audioCtx.destination);
   [110,165,220].forEach((freq,i) => {
     const osc=audioCtx.createOscillator(), g=audioCtx.createGain();
     osc.type='sine'; osc.frequency.value=freq; g.gain.value=[.40,.30,.25][i];
     osc.connect(g); g.connect(masterGain); osc.start(); oscs.push(osc);
   });
-  soundReady=true;
+  soundReady = true;
 }
 function sampleRegion(x0,y0,w,h) {
   let s=0,c=0;
   for (let y=y0;y<y0+h;y+=5) for (let x=x0;x<x0+w;x+=5) { s+=V[y*GS+x]; c++; }
   return c?s/c:0;
 }
-let lastSnd=0;
+let lastSnd = 0;
 function updateSound(ts) {
   if (!soundReady||!audioCtx||ts-lastSnd<200) return; lastSnd=ts;
-  const now=audioCtx.currentTime;
+  const now = audioCtx.currentTime;
   const r1=sampleRegion(0,0,GS/2,GS/2), r2=sampleRegion(GS/4,GS/4,GS/2,GS/2), r3=sampleRegion(GS/2,GS/2,GS/2,GS/2);
-  const mean=(r1+r2+r3)/3;
-  oscs[0].frequency.setTargetAtTime(110+r1*180,now,1.0);
-  oscs[1].frequency.setTargetAtTime(165+r2*110,now,1.0);
-  oscs[2].frequency.setTargetAtTime(220+r3*80, now,1.0);
+  const mean = (r1+r2+r3)/3;
+  oscs[0].frequency.setTargetAtTime(110+r1*180, now, 1.0);
+  oscs[1].frequency.setTargetAtTime(165+r2*110, now, 1.0);
+  oscs[2].frequency.setTargetAtTime(220+r3*80,  now, 1.0);
   masterGain.gain.setTargetAtTime(soundOn?volumeLevel*Math.sqrt(Math.min(mean/.08,1))*.18:0, now, 0.8);
 }
 
@@ -504,9 +787,9 @@ function loop(ts) {
 document.addEventListener('keydown', e => {
   if (e.code==='Space' && started) {
     e.preventDefault();
-    paused=!paused;
-    const hint=document.getElementById('pause-hint');
-    const btn=document.getElementById('pause-btn');
+    paused = !paused;
+    const hint = document.getElementById('pause-hint');
+    const btn  = document.getElementById('pause-btn');
     hint.classList.toggle('showing', paused);
     btn.classList.toggle('active', paused);
     btn.textContent = paused ? 'resume' : 'pause';
@@ -526,10 +809,10 @@ document.getElementById('title-card').addEventListener('pointerdown', () => {
   document.getElementById('controls').classList.add('visible');
   document.getElementById('nav-wrap').classList.add('visible');
   initSound(); audioCtx.resume();
-  started=true;
+  started = true;
   requestAnimationFrame(loop);
-  setTimeout(()=>{ document.getElementById('title-card').style.display='none'; }, 1800);
-}, { once:true });
+  setTimeout(() => { document.getElementById('title-card').style.display='none'; }, 1800);
+}, { once: true });
 
 // ─── Controls ──────────────────────────────────────────────────────────────
 
@@ -537,34 +820,33 @@ document.querySelectorAll('[data-palette]').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('[data-palette]').forEach(b=>b.classList.remove('active'));
     btn.classList.add('active');
-    currentPalKey=btn.dataset.palette;
-    lut=PALETTES[currentPalKey]; dualLut=DUAL[currentPalKey];
+    currentPalKey = btn.dataset.palette;
+    lut = PALETTES[currentPalKey]; dualLut = DUAL[currentPalKey];
   });
 });
-document.getElementById('dual-btn').addEventListener('click', ()=>{
-  dualMode=!dualMode;
-  document.getElementById('dual-btn').classList.toggle('active',dualMode);
+document.getElementById('dual-btn').addEventListener('click', () => {
+  dualMode = !dualMode;
+  document.getElementById('dual-btn').classList.toggle('active', dualMode);
 });
-document.getElementById('add-btn').addEventListener('click',  ()=>{ brushMode='add';  document.getElementById('add-btn').classList.add('active'); document.getElementById('sub-btn').classList.remove('active'); });
-document.getElementById('sub-btn').addEventListener('click',  ()=>{ brushMode='sub';  document.getElementById('sub-btn').classList.add('active'); document.getElementById('add-btn').classList.remove('active'); });
-document.getElementById('brush-slider').addEventListener('input',e=>{ brushSize=parseInt(e.target.value); document.getElementById('brush-val').textContent=brushSize; });
-document.getElementById('speed-slider').addEventListener('input',e=>{ stepsFrame=parseInt(e.target.value); document.getElementById('speed-val').textContent=stepsFrame; });
-document.getElementById('vol-slider').addEventListener('input',e=>{ volumeLevel=e.target.value/100; document.getElementById('vol-val').textContent=e.target.value+'%'; });
-document.getElementById('sound-btn').addEventListener('click',()=>{
-  soundOn=!soundOn;
-  document.getElementById('sound-btn').classList.toggle('active',soundOn);
-  document.getElementById('sound-btn').textContent=soundOn?'on':'off';
-  if (!soundOn&&masterGain) masterGain.gain.setTargetAtTime(0,audioCtx.currentTime,.3);
+document.getElementById('add-btn').addEventListener('click',  () => { brushMode='add';  document.getElementById('add-btn').classList.add('active'); document.getElementById('sub-btn').classList.remove('active'); });
+document.getElementById('sub-btn').addEventListener('click',  () => { brushMode='sub';  document.getElementById('sub-btn').classList.add('active'); document.getElementById('add-btn').classList.remove('active'); });
+document.getElementById('brush-slider').addEventListener('input', e => { brushSize=parseInt(e.target.value); document.getElementById('brush-val').textContent=brushSize; });
+document.getElementById('speed-slider').addEventListener('input', e => { stepsFrame=parseInt(e.target.value); document.getElementById('speed-val').textContent=stepsFrame; });
+document.getElementById('vol-slider').addEventListener('input', e => { volumeLevel=e.target.value/100; document.getElementById('vol-val').textContent=e.target.value+'%'; });
+document.getElementById('sound-btn').addEventListener('click', () => {
+  soundOn = !soundOn;
+  document.getElementById('sound-btn').classList.toggle('active', soundOn);
+  document.getElementById('sound-btn').textContent = soundOn ? 'on' : 'off';
+  if (!soundOn && masterGain) masterGain.gain.setTargetAtTime(0, audioCtx.currentTime, .3);
 });
-document.getElementById('pause-btn').addEventListener('click',()=>{
-  document.getElementById('pause-btn').dispatchEvent(new KeyboardEvent('keydown'));
-  paused=!paused;
-  const hint=document.getElementById('pause-hint');
-  hint.classList.toggle('showing',paused);
-  document.getElementById('pause-btn').classList.toggle('active',paused);
-  document.getElementById('pause-btn').textContent=paused?'resume':'pause';
+document.getElementById('pause-btn').addEventListener('click', () => {
+  paused = !paused;
+  const hint = document.getElementById('pause-hint');
+  hint.classList.toggle('showing', paused);
+  document.getElementById('pause-btn').classList.toggle('active', paused);
+  document.getElementById('pause-btn').textContent = paused ? 'resume' : 'pause';
 });
-document.getElementById('reseed-btn').addEventListener('click',()=>{
+document.getElementById('reseed-btn').addEventListener('click', () => {
   reset(getSeedType());
   for (let i=0; i<200; i++) step();
 });
