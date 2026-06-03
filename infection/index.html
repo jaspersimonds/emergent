@@ -1,0 +1,659 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Infection</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body {
+  width: 100vw; height: 100vh;
+  background: #00000a;
+  overflow: hidden;
+  font-family: 'Courier New', monospace;
+  user-select: none;
+}
+#wrap { position: fixed; inset: 0; }
+canvas { position: absolute; top: 0; left: 0; display: block; }
+
+/* ── HUD layer ── */
+#hud {
+  position: absolute; inset: 0;
+  pointer-events: none;
+}
+
+/* territory bar */
+#bar-region {
+  position: absolute; top: 16px; left: 20px;
+  width: 220px;
+}
+#bar-label {
+  font-size: 11px; letter-spacing: 0.35em;
+  color: #3a8a9a; margin-bottom: 7px;
+  text-shadow: 0 0 10px rgba(0,0,20,1);
+}
+#bar-bg { height: 4px; background: rgba(180,40,20,0.25); border-radius: 2px; overflow: hidden; }
+#bar { height: 100%; width: 100%; background: #2ab8b0; border-radius: 2px; transition: background 0.8s; }
+#pct-text {
+  font-size: 22px; letter-spacing: 0.05em;
+  color: #3ab8c0; margin-top: 7px;
+  text-shadow: 0 0 14px rgba(0,200,220,0.4);
+}
+
+/* score */
+#score-region {
+  position: absolute; top: 16px; right: 20px;
+  text-align: right;
+}
+#score-val {
+  font-size: 22px; letter-spacing: 0.05em;
+  color: #c8a040;
+  text-shadow: 0 0 14px rgba(200,160,40,0.4);
+}
+#hs-val {
+  font-size: 11px; letter-spacing: 0.3em;
+  color: #5a5030; margin-top: 4px;
+}
+
+/* species tag */
+#species-tag {
+  position: absolute; top: 16px; left: 50%; transform: translateX(-50%);
+  text-align: center; opacity: 0; transition: opacity 1.2s;
+}
+#species-name { font-size: 15px; letter-spacing: 0.25em; margin-bottom: 3px; }
+#species-desc { font-size: 11px; line-height: 1.5; color: #604030; letter-spacing: 0.05em; }
+
+/* wave */
+#wave-badge {
+  position: absolute; top: 56px; left: 50%; transform: translateX(-50%);
+  font-size: 11px; letter-spacing: 0.3em; color: #3a6070;
+  opacity: 0; transition: opacity 0.6s;
+}
+
+/* bottom */
+#bottom-region {
+  position: absolute; bottom: 0; left: 0; right: 0;
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 0 20px 14px;
+}
+#phase-text {
+  font-size: 12px; letter-spacing: 0.35em;
+  color: #2a6a7a; transition: color 1s;
+  text-shadow: 0 0 8px rgba(0,0,20,0.9);
+}
+#vol-wrap {
+  display: flex; align-items: center; gap: 9px;
+  font-size: 11px; letter-spacing: 0.2em; color: #2a6070;
+  pointer-events: all;
+}
+input[type=range] {
+  -webkit-appearance: none; width: 70px; height: 3px;
+  background: #0a2030; border-radius: 2px; outline: none; cursor: pointer;
+}
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 10px; height: 10px;
+  background: #2a7080; border-radius: 50%;
+}
+
+/* help */
+#help-btn {
+  position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%);
+  background: none; border: 1px solid rgba(42,184,176,0.2);
+  color: #2a6878; font-family: 'Courier New', monospace;
+  font-size: 11px; letter-spacing: 0.3em; padding: 5px 14px;
+  cursor: pointer; pointer-events: all;
+  transition: color 0.3s, border-color 0.3s;
+  text-shadow: 0 0 8px rgba(0,0,20,0.9);
+}
+#help-btn:hover { color: #5aaaba; border-color: rgba(42,184,176,0.5); }
+
+/* warning */
+#warning {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  font-size: 14px; letter-spacing: 0.55em; color: #c05020;
+  text-transform: uppercase; opacity: 0; pointer-events: none;
+  text-shadow: 0 0 20px rgba(200,80,30,0.6);
+}
+
+/* danger indicator */
+#danger-ring {
+  position: absolute; inset: 0; pointer-events: none;
+  opacity: 0; transition: opacity 0.5s;
+  box-shadow: inset 0 0 80px rgba(200,30,10,0.35);
+}
+
+/* death screen */
+#death-screen {
+  display: none; position: absolute; inset: 0;
+  flex-direction: column; align-items: center; justify-content: center;
+  background: rgba(0,0,8,0.82); backdrop-filter: blur(14px);
+  z-index: 20; gap: 12px;
+}
+#death-title { font-size: 26px; letter-spacing: 0.5em; color: #c02818; text-transform: uppercase; }
+#death-sub { font-size: 13px; letter-spacing: 0.3em; color: #5a2818; margin-top: 4px; }
+#death-score { font-size: 28px; letter-spacing: 0.1em; color: #c8a040; margin: 8px 0 4px; }
+#death-hs { font-size: 12px; letter-spacing: 0.35em; color: #5a4818; }
+#restart-btn {
+  margin-top: 14px; background: none;
+  border: 1px solid rgba(42,184,176,0.3);
+  color: #3a9aaa; font-family: 'Courier New', monospace;
+  font-size: 13px; letter-spacing: 0.45em; padding: 12px 30px;
+  cursor: pointer; text-transform: uppercase;
+  transition: color 0.3s, border-color 0.3s;
+}
+#restart-btn:hover { color: #5abaca; border-color: rgba(42,184,176,0.6); }
+
+/* overlay */
+#overlay {
+  display: none; position: absolute; top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(0,0,14,0.96); backdrop-filter: blur(20px);
+  border: 1px solid rgba(42,184,176,0.14);
+  padding: 28px 32px; width: 380px;
+  pointer-events: all; z-index: 10;
+}
+.o-head { font-size: 10px; letter-spacing: 0.35em; color: #2ab8b0; text-transform: uppercase; margin-bottom: 6px; }
+.o-body { font-size: 13px; line-height: 1.8; color: #4a7a88; margin-bottom: 16px; }
+.o-body em { color: #7ab0be; font-style: normal; }
+.o-body:last-child { margin-bottom: 0; }
+#overlay-x {
+  position: absolute; top: 10px; right: 14px;
+  background: none; border: none; color: #2a5a6a;
+  font-size: 20px; cursor: pointer; font-family: inherit;
+}
+#overlay-x:hover { color: #6a9aaa; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="c"></canvas>
+
+  <div id="hud">
+    <div id="bar-region">
+      <div id="bar-label">Territory</div>
+      <div id="bar-bg"><div id="bar"></div></div>
+      <div id="pct-text">100%</div>
+    </div>
+
+    <div id="score-region">
+      <div id="score-val">0</div>
+      <div id="hs-val">best —</div>
+    </div>
+
+    <div id="species-tag">
+      <div id="species-name"></div>
+      <div id="species-desc"></div>
+    </div>
+    <div id="wave-badge"></div>
+
+    <div id="bottom-region">
+      <div id="phase-text">establishing territory</div>
+      <div id="vol-wrap">
+        <span>vol</span>
+        <input type="range" id="vol" min="0" max="1" step="0.01" value="0.5">
+      </div>
+    </div>
+
+    <button id="help-btn">? field guide</button>
+    <div id="warning">intrusion detected</div>
+    <div id="danger-ring"></div>
+  </div>
+
+  <div id="death-screen">
+    <div id="death-title">territory lost</div>
+    <div id="death-sub"></div>
+    <div id="death-score"></div>
+    <div id="death-hs"></div>
+    <button id="restart-btn">begin again</button>
+  </div>
+
+  <div id="overlay">
+    <button id="overlay-x">×</button>
+    <div class="o-head">What You're Watching</div>
+    <div class="o-body">
+      Two chemical patterns compete for the same territory.
+      <em>Teal</em> is yours — coral chemistry, forming in winding clusters.
+      The <em>other color</em> is the invader — entering from a corner with its own personality.
+    </div>
+    <div class="o-head">What To Do</div>
+    <div class="o-body">
+      <em>Click and drag</em> to paint your chemistry back into invaded ground — even during the alert.
+      <em>Scroll</em> to resize the brush. Push the invader back and a new wave arrives faster.
+    </div>
+    <div class="o-head">Scoring</div>
+    <div class="o-body">
+      Points accumulate for every second you hold territory.
+      Fall below 35% and earn <em>3× multiplier</em> — high risk, high reward.
+      Recover from near-death to trigger a <em>resurgence bonus</em>.
+    </div>
+    <div class="o-head">The Deeper Truth</div>
+    <div class="o-body">
+      Gray-Scott reaction-diffusion — leopard spots, coral growth, chemical oscillators.
+      You're not fighting pixels.
+      <em>You're negotiating with chemistry.</em>
+    </div>
+  </div>
+</div>
+
+<script>
+// ─── Canvas sizing ─────────────────────────────────────────────────────────
+const SCALE = window.innerWidth > 1600 ? 5 : window.innerWidth > 900 ? 4 : 3;
+const W = Math.ceil(window.innerWidth  / SCALE);
+const H = Math.ceil(window.innerHeight / SCALE);
+const canvas = document.getElementById('c');
+canvas.width  = W * SCALE;
+canvas.height = H * SCALE;
+const ctx = canvas.getContext('2d');
+const img = ctx.createImageData(canvas.width, canvas.height);
+const pxl = img.data;
+
+// Pre-bake canvas gradients for HUD readability
+const topGrad = ctx.createLinearGradient(0, 0, 0, 90);
+topGrad.addColorStop(0, 'rgba(0,0,12,0.82)');
+topGrad.addColorStop(1, 'rgba(0,0,12,0)');
+const botGrad = ctx.createLinearGradient(0, canvas.height - 80, 0, canvas.height);
+botGrad.addColorStop(0, 'rgba(0,0,12,0)');
+botGrad.addColorStop(1, 'rgba(0,0,12,0.82)');
+
+// ─── RD setup ─────────────────────────────────────────────────────────────
+const Du = 0.20, Dv = 0.10;
+const HOME = { f: 0.0545, k: 0.062 };
+const SPECIES = [
+  { name: 'The Worm',  desc: 'Grows in tendrils. Patient.\nFinds every crack.',
+    f: 0.078, k: 0.061, bg:[28,10,4],  accent:[225,95,8],   color:'#d06018' },
+  { name: 'The Maze',  desc: 'Builds walls. Orderly.\nRelentless.',
+    f: 0.039, k: 0.058, bg:[22,4,32],  accent:[190,25,200], color:'#b020d0' },
+  { name: 'The Storm', desc: 'No pattern. No mercy.\nJust pressure.',
+    f: 0.026, k: 0.051, bg:[8,4,38],   accent:[130,55,240], color:'#7030e8' },
+];
+const CORNERS = () => [[W-14,H-14],[14,H-14],[14,14],[W-14,14]];
+const BASE_SPREAD = 0.0042;
+
+// ─── Simulation arrays ─────────────────────────────────────────────────────
+let uA,vA,uB,vB,terr;
+function allocate() {
+  uA=new Float32Array(W*H); vA=new Float32Array(W*H);
+  uB=new Float32Array(W*H); vB=new Float32Array(W*H);
+  terr=new Float32Array(W*H);
+}
+
+// ─── Game state ────────────────────────────────────────────────────────────
+let phase, warmFrame, alertFrame, battleFrame;
+let homePercent, prevHomePercent;
+let species, waveCount, respawnCooldown, survivedMsg;
+const WARMUP=380, ALERT=150, RESPAWN_WAIT=260;
+
+// ─── Scoring ───────────────────────────────────────────────────────────────
+let score, highScore, pressureBuildup, pressureActive, multiplier;
+const scoreEvents = [];
+try { highScore = parseInt(localStorage.getItem('infection-hs') || '0'); } catch(e) { highScore=0; }
+
+function showScoreEvent(text, color) {
+  scoreEvents.push({ text, color: color||'#ffd070', x: canvas.width/2, y: canvas.height*0.42, age: 0 });
+}
+
+function updateScore() {
+  if (phase !== 'battle') return;
+  multiplier = homePercent < 0.35 ? 3.0 : 1.0;
+  score += homePercent * homePercent * multiplier * 1.8;
+
+  if (homePercent < 0.28) {
+    pressureBuildup += multiplier;
+    pressureActive = true;
+  } else if (pressureActive && homePercent > 0.62) {
+    const bonus = Math.round(pressureBuildup * 4);
+    if (bonus > 50) {
+      score += bonus;
+      showScoreEvent(`resurgence  +${fmt(bonus)}`, '#40e0c0');
+    }
+    pressureBuildup = 0; pressureActive = false;
+  }
+
+  if (score > highScore) {
+    highScore = score;
+    try { localStorage.setItem('infection-hs', Math.floor(highScore)); } catch(e){}
+  }
+}
+
+function fmt(n) {
+  return Math.floor(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+// ─── Init ──────────────────────────────────────────────────────────────────
+function init() {
+  allocate();
+  phase='warming'; warmFrame=0; alertFrame=0; battleFrame=0;
+  homePercent=1.0; prevHomePercent=1.0;
+  species=SPECIES[Math.floor(Math.random()*SPECIES.length)];
+  waveCount=0; respawnCooldown=0; survivedMsg=false;
+  score=0; pressureBuildup=0; pressureActive=false; multiplier=1;
+  scoreEvents.length=0;
+
+  for (let i=0;i<W*H;i++){uA[i]=1;vA[i]=0;terr[i]=0;}
+  const seeds=Math.floor(W*H/130);
+  for (let s=0;s<seeds;s++){
+    const x=4+Math.floor(Math.random()*(W-8));
+    const y=4+Math.floor(Math.random()*(H-8));
+    for (let dy=-2;dy<=2;dy++) for (let dx=-2;dx<=2;dx++){
+      const i=(y+dy)*W+(x+dx);
+      if(i>=0&&i<W*H){uA[i]=0.50+Math.random()*0.08;vA[i]=0.25+Math.random()*0.04;}
+    }
+  }
+
+  phaseEl.textContent='establishing territory'; phaseEl.style.color='#2a6a7a';
+  document.getElementById('species-tag').style.opacity=0;
+  document.getElementById('wave-badge').style.opacity=0;
+  barEl.style.width='100%'; pctEl.textContent='100%'; pctEl.style.color='#3ab8c0';
+  scoreEl.textContent='0'; document.getElementById('danger-ring').style.opacity=0;
+}
+
+function seedInvader(waveIdx){
+  const [cx,cy]=CORNERS()[waveIdx%4];
+  for(let dy=-10;dy<=10;dy++) for(let dx=-10;dx<=10;dx++){
+    if(dx*dx+dy*dy>100) continue;
+    const x=cx+dx,y=cy+dy;
+    if(x<1||x>=W-1||y<1||y>=H-1) continue;
+    const i=y*W+x; terr[i]=1.0;
+    uA[i]=0.50+Math.random()*0.1; vA[i]=0.25+Math.random()*0.05;
+  }
+}
+
+// ─── Reaction-Diffusion ────────────────────────────────────────────────────
+function stepRD(){
+  for(let y=1;y<H-1;y++) for(let x=1;x<W-1;x++){
+    const i=y*W+x,t=terr[i];
+    const f=HOME.f*(1-t)+species.f*t, k=HOME.k*(1-t)+species.k*t;
+    const u=uA[i],v=vA[i];
+    const lapU=uA[i-1]+uA[i+1]+uA[i-W]+uA[i+W]-4*u;
+    const lapV=vA[i-1]+vA[i+1]+vA[i-W]+vA[i+W]-4*v;
+    const uvv=u*v*v;
+    uB[i]=Math.max(0,Math.min(1,u+Du*lapU-uvv+f*(1-u)));
+    vB[i]=Math.max(0,Math.min(1,v+Dv*lapV+uvv-(f+k)*v));
+  }
+  for(let x=0;x<W;x++){
+    uB[x]=uB[W+x];vB[x]=vB[W+x];
+    uB[(H-1)*W+x]=uB[(H-2)*W+x];vB[(H-1)*W+x]=vB[(H-2)*W+x];
+  }
+  for(let y=0;y<H;y++){
+    uB[y*W]=uB[y*W+1];vB[y*W]=vB[y*W+1];
+    uB[y*W+W-1]=uB[y*W+W-2];vB[y*W+W-1]=vB[y*W+W-2];
+  }
+  uA.set(uB);vA.set(vB);
+}
+
+// ─── Territory ─────────────────────────────────────────────────────────────
+function spreadTerritory(){
+  const sp=BASE_SPREAD*(1+waveCount*0.15);
+  let homeCount=0;
+  for(let y=1;y<H-1;y++) for(let x=1;x<W-1;x++){
+    const i=y*W+x,t=terr[i],v=vA[i];
+    if(t>0.06){
+      const s=v*sp*Math.min(t*2,1);
+      terr[i-1]=Math.min(1,terr[i-1]+s);terr[i+1]=Math.min(1,terr[i+1]+s);
+      terr[i-W]=Math.min(1,terr[i-W]+s);terr[i+W]=Math.min(1,terr[i+W]+s);
+    }
+    if(t>0&&t<0.6&&v>0.15) terr[i]=Math.max(0,t-v*0.0004);
+    if(terr[i]<0.5) homeCount++;
+  }
+  prevHomePercent=homePercent;
+  homePercent=homeCount/(W*H);
+}
+
+// ─── Brush ─────────────────────────────────────────────────────────────────
+let brushR=11, bx=0, by=0, painting=false;
+
+function applyBrush(){
+  if(!painting) return;
+  const cx=Math.round(bx/SCALE), cy=Math.round(by/SCALE);
+  for(let dy=-brushR;dy<=brushR;dy++) for(let dx=-brushR;dx<=brushR;dx++){
+    const d2=dx*dx+dy*dy;
+    if(d2>brushR*brushR) continue;
+    const nx=cx+dx,ny=cy+dy;
+    if(nx<1||nx>=W-1||ny<1||ny>=H-1) continue;
+    const i=ny*W+nx;
+    const str=Math.max(0,1-Math.sqrt(d2)/brushR);
+    terr[i]=Math.max(0,terr[i]-str*0.18);
+    uA[i]=Math.min(1,uA[i]+str*0.22);
+    vA[i]=Math.max(0,vA[i]-str*0.09);
+  }
+}
+
+// ─── Render ────────────────────────────────────────────────────────────────
+function render(){
+  const sbg=species.bg, sacc=species.accent;
+  for(let y=0;y<H;y++) for(let x=0;x<W;x++){
+    const i=y*W+x, v=vA[i], t=terr[i];
+    const br=v*v*2.8;
+    const hr=6+br*28, hg=18+br*195, hb=48+br*160;
+    let ir=sbg[0]+br*sacc[0], ig=sbg[1]+br*sacc[1], ib=sbg[2]+br*sacc[2];
+    let r=hr*(1-t)+ir*t, g=hg*(1-t)+ig*t, b=hb*(1-t)+ib*t;
+    if(t>0.08&&t<0.92){const glow=t*(1-t)*3.6;r+=glow*30;g+=glow*12;b+=glow*35;}
+    r=Math.min(255,r);g=Math.min(255,g);b=Math.min(255,b);
+    for(let dy=0;dy<SCALE;dy++) for(let dx=0;dx<SCALE;dx++){
+      const p=((y*SCALE+dy)*canvas.width+(x*SCALE+dx))*4;
+      pxl[p]=r;pxl[p+1]=g;pxl[p+2]=b;pxl[p+3]=255;
+    }
+  }
+  ctx.putImageData(img,0,0);
+
+  // HUD readability gradients
+  ctx.fillStyle=topGrad; ctx.fillRect(0,0,canvas.width,90);
+  ctx.fillStyle=botGrad; ctx.fillRect(0,canvas.height-80,canvas.width,80);
+
+  // Brush cursor (shown during alert + battle)
+  if(phase==='battle'||phase==='alert'){
+    ctx.strokeStyle='rgba(255,255,255,0.22)'; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.arc(bx,by,Math.max(4,brushR*SCALE),0,Math.PI*2); ctx.stroke();
+  }
+
+  // Score events
+  ctx.textAlign='center';
+  for(let i=scoreEvents.length-1;i>=0;i--){
+    const e=scoreEvents[i]; e.age++;
+    if(e.age>80){scoreEvents.splice(i,1);continue;}
+    const alpha=Math.max(0,1-e.age/80);
+    ctx.globalAlpha=alpha;
+    ctx.font=`bold ${Math.round(16*SCALE/3)}px 'Courier New'`;
+    ctx.fillStyle=e.color;
+    ctx.fillText(e.text, e.x, e.y-e.age*0.9);
+  }
+  ctx.globalAlpha=1; ctx.textAlign='left';
+}
+
+// ─── HUD ───────────────────────────────────────────────────────────────────
+const barEl=document.getElementById('bar');
+const pctEl=document.getElementById('pct-text');
+const scoreEl=document.getElementById('score-val');
+const hsEl=document.getElementById('hs-val');
+const phaseEl=document.getElementById('phase-text');
+const warnEl=document.getElementById('warning');
+const waveEl=document.getElementById('wave-badge');
+const dangerRing=document.getElementById('danger-ring');
+
+function updateHUD(){
+  const pct=Math.round(homePercent*100);
+  barEl.style.width=pct+'%';
+  const danger=homePercent<0.35;
+  barEl.style.background=homePercent>0.55?'#2ab8b0':homePercent>0.35?'#c09028':'#c02818';
+  pctEl.textContent=pct+'%';
+  pctEl.style.color=danger?'#c03020':homePercent>0.55?'#3ab8c0':'#c09028';
+  scoreEl.textContent=fmt(score);
+  if(highScore>0) hsEl.textContent=`best  ${fmt(highScore)}`;
+  dangerRing.style.opacity=danger?Math.min(1,(0.35-homePercent)*5):'0';
+  if(phase==='battle'){
+    phaseEl.textContent=danger?`DANGER — ${pct}% — 3× points`:`territory ${pct}%`;
+    phaseEl.style.color=danger?'#c03020':'#2a6a7a';
+    if(!survivedMsg&&battleFrame>60*90&&homePercent>0.20){
+      survivedMsg=true;
+      showScoreEvent('the territory holds', '#2ab8b0');
+    }
+  }
+}
+
+function showSpecies(){
+  document.getElementById('species-name').textContent=species.name;
+  document.getElementById('species-name').style.color=species.color;
+  document.getElementById('species-desc').textContent=species.desc;
+  document.getElementById('species-tag').style.opacity=1;
+  if(waveCount>0){waveEl.textContent=`wave ${waveCount+1}`;waveEl.style.opacity=1;}
+}
+
+// ─── Wave respawn ──────────────────────────────────────────────────────────
+function checkRespawn(){
+  if(respawnCooldown>0){
+    respawnCooldown--;
+    if(respawnCooldown===0){
+      waveCount++;
+      const bonus=500*(waveCount);
+      score+=bonus;
+      showScoreEvent(`wave cleared  +${fmt(bonus)}`, '#ffd070');
+      const others=SPECIES.filter(s=>s!==species);
+      species=others[Math.floor(Math.random()*others.length)];
+      phase='alert'; alertFrame=0;
+      seedInvader(waveCount); showSpecies();
+      phaseEl.textContent='new vector'; phaseEl.style.color='#c05020';
+    }
+    return;
+  }
+  if(homePercent>0.96&&respawnCooldown===0){
+    respawnCooldown=RESPAWN_WAIT;
+  }
+}
+
+// ─── Death ─────────────────────────────────────────────────────────────────
+function checkDeath(){
+  if(phase==='battle'&&homePercent<0.06){
+    phase='dead';
+    document.getElementById('death-sub').textContent=
+      waveCount===0?'wave 1':`survived ${waveCount} wave${waveCount>1?'s':''}`;
+    document.getElementById('death-score').textContent=fmt(score);
+    document.getElementById('death-hs').textContent=
+      Math.floor(score)>=Math.floor(highScore)?'new best':'best  '+fmt(highScore);
+    document.getElementById('death-screen').style.display='flex';
+    if(audioReady){
+      homeGain.gain.setTargetAtTime(0,audio.currentTime,1.2);
+      invGain.gain.setTargetAtTime(0,audio.currentTime,1.2);
+    }
+  }
+}
+document.getElementById('restart-btn').addEventListener('click',()=>{
+  document.getElementById('death-screen').style.display='none';
+  init(); audioReady&&initAudio();
+});
+
+// ─── Audio ─────────────────────────────────────────────────────────────────
+let audio,master,homeOsc,homeGain,invOsc,invFilter,invGain;
+let audioReady=false;
+function initAudio(){
+  if(audioReady){
+    // Resume if Chrome suspended it
+    if(audio && audio.state==='suspended') audio.resume();
+    return;
+  }
+  try{
+    audioReady=true;
+    audio=new(window.AudioContext||window.webkitAudioContext)();
+    audio.resume(); // explicit resume — Chrome suspends by default
+
+    master=audio.createGain();
+    master.gain.value=parseFloat(document.getElementById('vol').value)*0.55;
+    master.connect(audio.destination);
+
+    // Home drone: 110Hz (A2) — warm, calm, audible on laptop speakers
+    homeOsc=audio.createOscillator(); homeOsc.type='sine'; homeOsc.frequency.value=110;
+    const homeOsc2=audio.createOscillator(); homeOsc2.type='sine'; homeOsc2.frequency.value=220;
+    homeGain=audio.createGain(); homeGain.gain.value=0.35;
+    const homeGain2=audio.createGain(); homeGain2.gain.value=0.12;
+    homeOsc.connect(homeGain); homeGain.connect(master);
+    homeOsc2.connect(homeGain2); homeGain2.connect(master);
+    homeOsc.start(); homeOsc2.start();
+
+    // Invader tone: 130.8Hz (C3) minor third — tense, filtered sawtooth
+    invOsc=audio.createOscillator(); invOsc.type='sawtooth'; invOsc.frequency.value=130.8;
+    invFilter=audio.createBiquadFilter(); invFilter.type='lowpass'; invFilter.frequency.value=300;
+    invGain=audio.createGain(); invGain.gain.value=0;
+    invOsc.connect(invFilter); invFilter.connect(invGain); invGain.connect(master);
+    invOsc.start();
+
+    // Audio indicator
+    document.getElementById('vol-wrap').querySelector('span').textContent='♪ vol';
+  }catch(e){ audioReady=false; }
+}
+function updateSound(){
+  if(!audioReady) return;
+  if(audio.state==='suspended') audio.resume();
+  const t=audio.currentTime, threat=1-homePercent;
+  const fs=Math.max(0,prevHomePercent-homePercent)*400;
+  homeGain.gain.setTargetAtTime(0.35*homePercent,t,0.8);
+  invGain.gain.setTargetAtTime(0.42*threat,t,0.5);
+  invFilter.frequency.setTargetAtTime(300+threat*1200+fs*300,t,0.3);
+}
+document.getElementById('vol').addEventListener('input',e=>{
+  initAudio();
+  if(audioReady) master.gain.setTargetAtTime(parseFloat(e.target.value)*0.32,audio.currentTime,0.1);
+});
+
+// Start audio on ANY first user interaction
+['click','keydown','touchstart','wheel'].forEach(ev=>{
+  document.addEventListener(ev, ()=>initAudio(), {once:true, passive:true});
+});
+
+// ─── Input ─────────────────────────────────────────────────────────────────
+canvas.addEventListener('pointerdown',e=>{
+  if(phase!=='battle'&&phase!=='alert') return;
+  initAudio(); painting=true;
+  canvas.setPointerCapture(e.pointerId);
+  const r=canvas.getBoundingClientRect();
+  bx=e.clientX-r.left; by=e.clientY-r.top;
+});
+canvas.addEventListener('pointermove',e=>{
+  const r=canvas.getBoundingClientRect();
+  bx=e.clientX-r.left; by=e.clientY-r.top;
+});
+canvas.addEventListener('pointerup',()=>{painting=false;});
+canvas.addEventListener('wheel',e=>{
+  e.preventDefault();
+  brushR=Math.max(3,Math.min(28,brushR-Math.sign(e.deltaY)*2));
+},{passive:false});
+
+document.getElementById('help-btn').addEventListener('click',()=>{
+  document.getElementById('overlay').style.display='block';
+});
+document.getElementById('overlay-x').addEventListener('click',()=>{
+  document.getElementById('overlay').style.display='none';
+});
+
+// ─── Loop ──────────────────────────────────────────────────────────────────
+function loop(){
+  if(phase==='dead'){requestAnimationFrame(loop);return;}
+
+  if(phase==='warming'){
+    for(let s=0;s<4;s++) stepRD();
+    warmFrame++;
+    if(warmFrame>=WARMUP){
+      phase='alert'; alertFrame=0;
+      seedInvader(0); showSpecies();
+      phaseEl.textContent='intrusion detected'; phaseEl.style.color='#c05020';
+    }
+  }
+  if(phase==='alert'){
+    for(let s=0;s<2;s++) stepRD();
+    spreadTerritory(); applyBrush(); alertFrame++;
+    warnEl.style.opacity=(Math.sin(alertFrame*0.18)*0.5+0.5).toFixed(3);
+    if(alertFrame>=ALERT){phase='battle';warnEl.style.opacity=0;initAudio();}
+  }
+  if(phase==='battle'){
+    for(let s=0;s<2;s++){stepRD();applyBrush();}
+    spreadTerritory(); battleFrame++;
+    checkRespawn(); checkDeath(); updateScore(); updateSound();
+  }
+
+  render(); updateHUD();
+  requestAnimationFrame(loop);
+}
+
+// ─── Start ─────────────────────────────────────────────────────────────────
+init();
+loop();
+</script>
+</body>
+</html>
