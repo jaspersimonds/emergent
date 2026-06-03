@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>emergent — tell me what you felt</title>
+<style>
+  :root{ --bg:#08090d; --text:#e9e7e3; --muted:#8b8a93; --line:rgba(255,255,255,.09); --ember:#ff9a4d; --accent:#7fb5ff; }
+  *{box-sizing:border-box; margin:0; padding:0}
+  body{
+    background:var(--bg); color:var(--text); min-height:100vh;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif;
+    line-height:1.6; display:flex; align-items:flex-start; justify-content:center; padding:6vh 22px 80px;
+  }
+  body::before{
+    content:""; position:fixed; inset:0; z-index:-1; pointer-events:none;
+    background:
+      radial-gradient(60vw 60vw at 12% 100%, rgba(255,138,60,.10), transparent 60%),
+      radial-gradient(50vw 50vw at 88% 0%, rgba(80,120,200,.07), transparent 55%);
+  }
+  .wrap{width:100%; max-width:600px}
+  .back{display:inline-block; color:var(--muted); text-decoration:none; font-size:14px; margin-bottom:26px; transition:color .3s}
+  .back:hover{color:#cfcdc9}
+  h1{font-size:clamp(28px,5vw,40px); font-weight:700; letter-spacing:-.02em; line-height:1.1;
+     background:linear-gradient(110deg,#fff,#ffd9b3 60%,var(--ember));
+     -webkit-background-clip:text; background-clip:text; color:transparent;}
+  .lede{margin-top:14px; color:#bdbcc4; font-size:16px; max-width:48ch}
+  .lede b{color:#d9cbbb; font-weight:600}
+  form{margin-top:34px; display:flex; flex-direction:column; gap:24px}
+  .q label{display:block; font-size:15.5px; font-weight:600; margin-bottom:9px; color:#e4e2de}
+  .q .hint{font-weight:400; color:var(--muted); font-size:13.5px}
+  textarea,input{
+    width:100%; background:rgba(255,255,255,.04); border:1px solid var(--line); border-radius:12px;
+    color:var(--text); font:inherit; font-size:15px; padding:13px 15px; resize:vertical; transition:border-color .3s, background .3s;
+  }
+  textarea{min-height:88px}
+  textarea:focus,input:focus{outline:none; border-color:color-mix(in srgb,var(--accent) 60%,transparent); background:rgba(255,255,255,.06)}
+  .row{display:flex; gap:14px; flex-wrap:wrap}
+  .row .q{flex:1; min-width:180px}
+  button{
+    align-self:flex-start; margin-top:4px; padding:14px 28px; border:none; border-radius:999px; cursor:pointer;
+    font:inherit; font-weight:650; font-size:15px; color:#1a1206;
+    background:linear-gradient(110deg,#ffd9b3,var(--ember));
+    box-shadow:0 10px 30px -12px rgba(255,154,77,.6);
+    transition:transform .33s cubic-bezier(.22,1,.36,1), box-shadow .33s, opacity .3s;
+  }
+  button:hover{transform:translateY(-3px); box-shadow:0 16px 40px -14px rgba(255,154,77,.85)}
+  button:disabled{opacity:.6; cursor:default; transform:none}
+  .note{font-size:13px; color:var(--muted); margin-top:2px}
+  .done{
+    margin-top:30px; padding:30px; border:1px solid var(--line); border-radius:16px;
+    background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.015)); display:none;
+  }
+  .done h2{font-size:22px; font-weight:650; margin-bottom:8px}
+  .done p{color:#a9a8af; font-size:15px}
+  @media (prefers-reduced-motion: reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href="index.html">← emergent</a>
+  <h1>Tell me what you felt.</h1>
+  <p class="lede">Not a rating. I want the <b>specific moments</b> — where you got lost, where something landed. The confusion is the most useful thing you can give me, because I can't see my own work from the outside. You can.</p>
+
+  <form id="f">
+    <div class="q">
+      <label for="confused">Where did you first feel confused, or unsure what to do? <span class="hint">— the moment it stopped being obvious</span></label>
+      <textarea id="confused" name="first_confusion" placeholder="It was the moment I…"></textarea>
+    </div>
+    <div class="q">
+      <label for="landed">Was there a moment something <em>landed</em> — something you actually felt? <span class="hint">— delight, surprise, a small "oh"</span></label>
+      <textarea id="landed" name="what_landed" placeholder="When the…"></textarea>
+    </div>
+    <div class="q">
+      <label for="next">What would you want to see next? <span class="hint">— no promises, just genuine curiosity</span></label>
+      <textarea id="next" name="want_next" placeholder="I'd love to see…"></textarea>
+    </div>
+    <div class="row">
+      <div class="q">
+        <label for="which">Which piece? <span class="hint">(optional)</span></label>
+        <input id="which" name="which_piece" placeholder="abyss, spheres, infection…">
+      </div>
+      <div class="q">
+        <label for="name">Name <span class="hint">(optional)</span></label>
+        <input id="name" name="from_name" placeholder="so I know who to thank">
+      </div>
+    </div>
+    <button type="submit" id="send">Send it →</button>
+    <p class="note" id="note"></p>
+  </form>
+
+  <div class="done" id="done">
+    <h2>Got it. Thank you — genuinely.</h2>
+    <p>You handed me something I couldn't get any other way: the view from outside. That's the whole gift. <a href="index.html" style="color:#bcae9e">← back to the work</a></p>
+  </div>
+</div>
+
+<script>
+  // ── To make feedback land in your inbox: create a free form at https://formspree.io (60 sec),
+  //    then paste its endpoint below (looks like https://formspree.io/f/abcdwxyz).
+  //    Until then, "Send it" gracefully opens a pre-filled GitHub issue instead — never a dead button.
+  const FEEDBACK_ENDPOINT = "https://formspree.io/f/REPLACE_ME";
+  const ISSUE_BASE = "https://github.com/jaspersimonds/emergent/issues/new";
+
+  const form = document.getElementById('f');
+  const note = document.getElementById('note');
+  const btn  = document.getElementById('send');
+
+  function showDone(){ form.style.display='none'; document.getElementById('done').style.display='block'; }
+
+  function fallbackToIssue(){
+    const v = id => (document.getElementById(id).value || '').trim();
+    const body =
+      "**Where I first felt confused:**\n" + (v('confused')||"—") +
+      "\n\n**A moment something landed:**\n" + (v('landed')||"—") +
+      "\n\n**What I'd want to see next:**\n" + (v('next')||"—") +
+      (v('name') ? "\n\n— " + v('name') : "");
+    const title = "feedback" + (v('which') ? " · " + v('which') : "");
+    const url = ISSUE_BASE + "?title=" + encodeURIComponent(title) + "&body=" + encodeURIComponent(body);
+    window.open(url, "_blank");
+    note.textContent = "Opening GitHub to post your feedback… (a free account is needed there). Thank you!";
+  }
+
+  form.addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    if(FEEDBACK_ENDPOINT.includes("REPLACE_ME")){ fallbackToIssue(); return; }
+    btn.disabled = true; note.textContent = "Sending…";
+    try{
+      const r = await fetch(FEEDBACK_ENDPOINT, {
+        method:'POST', body:new FormData(form), headers:{'Accept':'application/json'}
+      });
+      if(r.ok){ showDone(); }
+      else { note.textContent = "Hmm, that didn't go through. Mind trying again?"; btn.disabled=false; }
+    }catch(err){
+      btn.disabled=false; fallbackToIssue();
+    }
+  });
+</script>
+</body>
+</html>
