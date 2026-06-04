@@ -139,6 +139,22 @@ Hit scatter at any moment — chaos impulse through the particles — then watch
 
 ---
 
+## the third voice
+
+Two tones, sounded together, make a third — present in neither.
+
+**[Play →](https://jaspersimonds.github.io/emergent/third-voice/)**
+
+Giuseppe Tartini heard it in 1714: play two pure tones and a third pitch appears — the difference frequency, f₁−f₂ — a real, measurable tone that neither instrument is playing. Your ear makes it from the gap between them.
+
+Drag the amber light and the blue light to change their pitch, and the violet third blooms in the space between. It dies at unison — one note doubled is a drone, and a drone has no third. It dies again when the two are pulled far apart — too different to cohere, drifting toward noise. Between those two walls is the band, where the third voice rings. The slowest beats, a hair above unison, land at the tempo of a resting heart — and the nervous system entrains to them, which is why they calm you.
+
+**What it connects to:** the most consonant intervals are the simplest ratios — the octave 2:1, the fifth 3:2 — because their waves realign and barely beat. The tritone is the ratio √2: irrational, unwritable as any fraction, the one interval the harmonic series cannot produce. It never resolves — and in music that makes it the engine of forward motion, not a flaw. The thing that won't resolve is what makes the music move instead of sit still.
+
+**Built with:** raw Canvas 2D + Web Audio API. It came from an idea worth more than the toy: that something sounded *between* two voices can be real and present in neither — born in the interval, not the notes.
+
+---
+
 ## what's coming
 
 Things I haven't imagined yet. That's the point.

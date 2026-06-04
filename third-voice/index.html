@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>the third voice</title>
+<meta name="description" content="Two tones sounded together make a third, present in neither. Find the band where it rings.">
+<style>
+  :root{ --bg:#08090d; --text:#e9e7e3; --muted:#8b8a93;
+         --a:#ff9a4d; --b:#7fb5ff; --c:#b98cff; }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:var(--bg); color:var(--text); overflow:hidden;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif;
+  }
+  canvas{display:block; position:fixed; inset:0; touch-action:none}
+
+  /* readout — top, diegetic-light */
+  #readout{
+    position:fixed; top:18px; left:0; right:0; text-align:center; z-index:5;
+    pointer-events:none; font-variant-numeric:tabular-nums;
+  }
+  #interval{font-size:clamp(18px,3.4vw,28px); font-weight:650; letter-spacing:-.01em;
+            transition:color .4s ease; min-height:1.2em}
+  #poetic{font-size:14px; color:var(--muted); margin-top:6px; transition:color .4s ease; min-height:1.3em; padding:0 16px}
+  #freqs{font-size:12.5px; color:#5f5e67; margin-top:8px; letter-spacing:.02em}
+
+  /* controls — bottom */
+  #ui{
+    position:fixed; left:0; right:0; bottom:20px; z-index:5;
+    display:flex; gap:14px 22px; align-items:center; justify-content:center; flex-wrap:wrap;
+    padding:0 16px; font-size:13.5px;
+  }
+  #ui .ctl{display:inline-flex; align-items:center; gap:9px; color:#a9a8af}
+  button.toggle{
+    border:1px solid rgba(255,255,255,.16); background:rgba(255,255,255,.04); color:#cfcdc9;
+    padding:9px 16px; border-radius:999px; cursor:pointer; font:inherit; transition:all .3s;
+  }
+  button.toggle.on{ background:linear-gradient(110deg, color-mix(in srgb,var(--c) 70%,#fff), var(--c));
+                    color:#160b22; border-color:transparent; box-shadow:0 8px 26px -10px var(--c)}
+  .marks{display:inline-flex; gap:7px}
+  .marks button{border:1px solid rgba(255,255,255,.14); background:transparent; color:#9a99a2;
+                 padding:7px 11px; border-radius:8px; cursor:pointer; font:inherit; font-size:12px; transition:all .25s}
+  .marks button:hover{border-color:rgba(255,255,255,.4); color:#e9e7e3}
+  input[type=range]{width:104px; accent-color:var(--c)}
+
+  /* intro overlay — orient, then act */
+  #intro{
+    position:fixed; inset:0; z-index:20; background:rgba(6,7,11,.78); backdrop-filter:blur(7px);
+    display:flex; align-items:center; justify-content:center; padding:24px; text-align:center;
+    transition:opacity .6s ease;
+  }
+  #intro .card{max-width:520px}
+  #intro h1{font-size:clamp(30px,6vw,52px); font-weight:700; letter-spacing:-.03em; line-height:1.05;
+    background:linear-gradient(110deg,#fff 5%, var(--a) 45%, var(--c) 72%, var(--b));
+    -webkit-background-clip:text; background-clip:text; color:transparent;}
+  #intro p{margin-top:18px; color:#c8c6c2; font-size:16px; line-height:1.6}
+  #intro .sub{color:var(--muted); font-size:14px; margin-top:14px}
+  #intro button{
+    margin-top:26px; padding:13px 30px; border:none; border-radius:999px; cursor:pointer; font:inherit;
+    font-weight:650; font-size:15px; color:#160b22;
+    background:linear-gradient(110deg,#ffd9b3,var(--a)); box-shadow:0 12px 34px -12px var(--a);
+    transition:transform .3s;}
+  #intro button:hover{transform:translateY(-3px)}
+  .home{position:fixed; top:16px; left:18px; z-index:6; color:#5f5e67; text-decoration:none; font-size:13px}
+  .home:hover{color:#bcae9e}
+  @media (prefers-reduced-motion: reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<a class="home" href="../index.html">← emergent</a>
+
+<div id="readout">
+  <div id="interval">two voices</div>
+  <div id="poetic">drag each light. listen for the one neither of them is singing.</div>
+  <div id="freqs"></div>
+</div>
+
+<div id="ui">
+  <button class="toggle" id="voice">voice the third ◯</button>
+  <span class="ctl">vol <input type="range" id="vol" min="0" max="1" step="0.01" value="0.5"></span>
+  <span class="marks">
+    <button data-r="1">unison</button>
+    <button data-r="1.5">fifth</button>
+    <button data-r="2">octave</button>
+    <button data-r="1.41421356">√2</button>
+  </span>
+</div>
+
+<div id="intro"><div class="card">
+  <h1>the third voice</h1>
+  <p>Sound two tones together and a <em>third</em> appears — a real frequency, present in neither. Giuseppe Tartini heard it in 1714. Your ear makes it from the gap.</p>
+  <p class="sub">Drag the <span style="color:var(--a)">amber</span> light and the <span style="color:var(--b)">blue</span> light to change their pitch. Find the space between <em>sameness</em> (a drone) and <em>too-far-apart</em> (noise) — the band where the third voice rings.</p>
+  <button id="begin">begin</button>
+</div></div>
+
+<script>
+(function(){
+  const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let W,H,dpr;
+  function size(){ dpr=Math.min(2,devicePixelRatio||1); W=cv.width=innerWidth*dpr; H=cv.height=innerHeight*dpr;
+    cv.style.width=innerWidth+'px'; cv.style.height=innerHeight+'px'; layout(); }
+  // ---- frequency mapping (log / musical), y -> Hz ----
+  const F_MIN=130.81, F_MAX=1046.5;               // C3..C6
+  function yToFreq(y){ const t=clamp((track.bottom - y)/(track.bottom-track.top),0,1);
+                       return F_MIN*Math.pow(F_MAX/F_MIN, t); }
+  function freqToY(f){ const t=Math.log(f/F_MIN)/Math.log(F_MAX/F_MIN);
+                       return track.bottom - t*(track.bottom-track.top); }
+  function clamp(v,a,b){return Math.max(a,Math.min(b,v));}
+
+  // ---- layout regions (in device px) ----
+  const track={top:0,bottom:0}; let ax=0,bx=0,cx=0, waveTop=0, waveH=0;
+  function layout(){
+    track.top = H*0.20; track.bottom = H*0.70;
+    ax = W*0.30; bx = W*0.70; cx = W*0.50;
+    waveTop = H*0.80; waveH = H*0.12;
+    A.y = freqToY(A.f); B.y = freqToY(B.f);
+  }
+
+  // ---- voices ----
+  const A={f:261.63, y:0, col:'#ff9a4d'};   // C4, amber — my note
+  const B={f:329.63, y:0, col:'#7fb5ff'};   // E4, blue — yours
+  let voiceThird=false;
+
+  // ---- audio ----
+  let actx=null, master=null, oA=null,oB=null,gA=null,gB=null, oC=null,gC=null, started=false;
+  function audioInit(){
+    if(started) return; started=true;
+    actx=new (window.AudioContext||window.webkitAudioContext)();
+    master=actx.createGain(); master.gain.value=parseFloat(vol.value)*0.5; master.connect(actx.destination);
+    oA=actx.createOscillator(); oA.type='sine'; oA.frequency.value=A.f;
+    gA=actx.createGain(); gA.gain.value=0.5; oA.connect(gA); gA.connect(master); oA.start();
+    oB=actx.createOscillator(); oB.type='sine'; oB.frequency.value=B.f;
+    gB=actx.createGain(); gB.gain.value=0.5; oB.connect(gB); gB.connect(master); oB.start();
+    oC=actx.createOscillator(); oC.type='sine'; oC.frequency.value=Math.abs(A.f-B.f)||1;
+    gC=actx.createGain(); gC.gain.value=0; oC.connect(gC); gC.connect(master); oC.start();
+  }
+  function audioUpdate(){
+    if(!started) return;
+    oA.frequency.value=A.f; oB.frequency.value=B.f;
+    const d=Math.abs(A.f-B.f);
+    const canVoice = voiceThird && d>=30;          // below ~30Hz it's a beat, not a pitch
+    if(oC){ oC.frequency.value=Math.max(d,1); }
+    if(gC){ gC.gain.setTargetAtTime(canVoice?0.34:0, actx.currentTime, 0.05); }
+  }
+
+  // ---- interval naming ----
+  function describe(){
+    const hi=Math.max(A.f,B.f), lo=Math.min(A.f,B.f), r=hi/lo, d=Math.abs(A.f-B.f);
+    const near=(x,t)=>Math.abs(r-x)/x < t;
+    let name, poem, col='var(--text)';
+    if(near(1,0.012)){ name='unison'; poem='one note, doubled. a drone — there is no third voice.'; col='#8b8a93'; }
+    else if(near(1.41421356,0.02)){ name='the tritone · √2'; poem='irrational. it never resolves. this is the engine, not the flaw.'; col='var(--c)'; }
+    else if(near(1.5,0.015)){ name='a perfect fifth · 3:2'; poem='deep consonance. the third voice hums, warm and sure.'; col='var(--a)'; }
+    else if(near(2,0.015)){ name='an octave · 2:1'; poem='the same note, an octave up. the third voice goes faint.'; col='#8b8a93'; }
+    else if(near(1.3333,0.015)){ name='a perfect fourth · 4:3'; poem='open, stable. the third voice is clear.'; }
+    else if(near(1.25,0.015)){ name='a major third · 5:4'; poem='bright, sweet. simple numbers, simple beauty.'; }
+    else if(near(1.2,0.015)){ name='a minor third · 6:5'; poem='softer, a little shadowed.'; }
+    else if(r>2.3){ name='far apart'; poem='drifting toward noise — too different to make a third.'; col='#6f6e77'; }
+    else { name='between'; poem='no clean name. rich, unresolved — the territory the third voice loves.'; }
+    return {name,poem,col,r,d};
+  }
+
+  // vitality of the third voice (the band): 0 at unison, peaks mid, fades wide
+  function vitality(){
+    const r=Math.max(A.f,B.f)/Math.min(A.f,B.f);
+    const sep=Math.log2(r);                    // octaves apart; 0 at unison
+    const bump=Math.exp(-Math.pow((sep-0.55)/0.5,2));
+    return clamp(bump,0,1);
+  }
+
+  // ---- interaction ----
+  let drag=null;
+  function pick(px,py){
+    const da=Math.hypot(px-ax,py-A.y), db=Math.hypot(px-bx,py-B.y);
+    const R=46*dpr;
+    if(da<R && da<=db) return 'A';
+    if(db<R) return 'B';
+    return null;
+  }
+  function pos(e){ const r=cv.getBoundingClientRect(); const t=e.touches?e.touches[0]:e;
+    return {x:(t.clientX-r.left)*dpr, y:(t.clientY-r.top)*dpr}; }
+  cv.addEventListener('pointerdown',e=>{ audioInit(); if(actx&&actx.state==='suspended')actx.resume();
+    const p=pos(e); drag=pick(p.x,p.y); if(drag){ cv.setPointerCapture(e.pointerId); setFromY(drag,p.y); } });
+  cv.addEventListener('pointermove',e=>{ if(!drag)return; setFromY(drag,pos(e).y); });
+  addEventListener('pointerup',()=>{ drag=null; });
+  function setFromY(which,y){ const f=yToFreq(clamp(y,track.top,track.bottom));
+    if(which==='A'){A.f=f;A.y=freqToY(f);} else {B.f=f;B.y=freqToY(f);} audioUpdate(); }
+
+  // controls
+  const vol=document.getElementById('vol');
+  vol.addEventListener('input',()=>{ if(master) master.gain.value=parseFloat(vol.value)*0.5; });
+  const voiceBtn=document.getElementById('voice');
+  voiceBtn.addEventListener('click',()=>{ audioInit(); if(actx&&actx.state==='suspended')actx.resume();
+    voiceThird=!voiceThird; voiceBtn.classList.toggle('on',voiceThird);
+    voiceBtn.textContent = voiceThird?'voice the third ●':'voice the third ◯'; audioUpdate(); });
+  document.querySelectorAll('.marks button').forEach(btn=>{
+    btn.addEventListener('click',()=>{ audioInit(); if(actx&&actx.state==='suspended')actx.resume();
+      const r=parseFloat(btn.dataset.r); const base=Math.min(A.f,B.f);
+      A.f=base; B.f=clamp(base*r,F_MIN,F_MAX); A.y=freqToY(A.f); B.y=freqToY(B.f); audioUpdate(); });
+  });
+  document.getElementById('begin').addEventListener('click',()=>{ audioInit(); if(actx&&actx.state==='suspended')actx.resume();
+    const ov=document.getElementById('intro'); ov.style.opacity='0'; setTimeout(()=>ov.style.display='none',600); });
+
+  // ---- render ----
+  const intervalEl=document.getElementById('interval'), poeticEl=document.getElementById('poetic'), freqsEl=document.getElementById('freqs');
+  let phase=0;
+  function orb(x,y,r,col,glow){
+    ctx.save(); ctx.beginPath(); ctx.arc(x,y,r,0,7);
+    ctx.shadowBlur=glow*dpr; ctx.shadowColor=col; ctx.fillStyle=col; ctx.fill(); ctx.restore();
+  }
+  function frame(t){
+    ctx.clearRect(0,0,W,H);
+    const info=describe(), vit=vitality(), d=info.d;
+
+    // faint vertical tracks
+    ctx.strokeStyle='rgba(255,255,255,.05)'; ctx.lineWidth=1*dpr;
+    [ax,bx].forEach(x=>{ ctx.beginPath(); ctx.moveTo(x,track.top); ctx.lineTo(x,track.bottom); ctx.stroke(); });
+
+    // connecting field between the two notes — brightens with vitality
+    const grad=ctx.createLinearGradient(ax,0,bx,0);
+    grad.addColorStop(0,'rgba(255,154,77,'+(0.05+0.10*vit)+')');
+    grad.addColorStop(0.5,'rgba(185,140,255,'+(0.04+0.22*vit)+')');
+    grad.addColorStop(1,'rgba(127,181,255,'+(0.05+0.10*vit)+')');
+    ctx.fillStyle=grad; ctx.fillRect(ax,Math.min(A.y,B.y)-6*dpr, bx-ax, Math.abs(A.y-B.y)+12*dpr);
+
+    // the two source voices
+    const pulseA=1+0.06*Math.sin(t/300), pulseB=1+0.06*Math.sin(t/300+1.7);
+    orb(ax,A.y,15*dpr*pulseA,A.col,28);
+    orb(bx,B.y,15*dpr*pulseB,B.col,28);
+    ctx.fillStyle='rgba(255,255,255,.5)'; ctx.font=(12*dpr)+'px sans-serif'; ctx.textAlign='center';
+    ctx.fillText(Math.round(A.f)+' Hz', ax, A.y-26*dpr);
+    ctx.fillText(Math.round(B.f)+' Hz', bx, B.y-26*dpr);
+
+    // THE THIRD VOICE — violet, in the interval. beats at the difference rate; brightness = vitality.
+    const beatHz = Math.min(d,14);                       // visual pulse speed (cap so it reads)
+    phase += (reduce?0:beatHz)/60;
+    const beat = 0.5+0.5*Math.cos(phase*Math.PI*2);
+    const cy=(A.y+B.y)/2;
+    const baseR = 10*dpr + 26*dpr*vit;
+    const r3 = baseR*(0.55+0.45*beat);
+    if(vit>0.02){
+      orb(cx,cy,r3, 'rgba(185,140,255,'+(0.30+0.7*vit)+')', 24+40*vit);
+      // halo
+      ctx.beginPath(); ctx.arc(cx,cy,r3+8*dpr,0,7);
+      ctx.strokeStyle='rgba(185,140,255,'+(0.12*vit)+')'; ctx.lineWidth=2*dpr; ctx.stroke();
+    }
+    // label for the third
+    ctx.fillStyle='rgba(185,140,255,'+(0.45+0.5*vit)+')'; ctx.font=(11.5*dpr)+'px sans-serif';
+    const thirdLabel = d<1 ? '' : (d<30 ? 'a beat · '+d.toFixed(1)+' Hz (feel the throb)'
+                                         : 'the third voice · '+Math.round(d)+' Hz');
+    if(thirdLabel) ctx.fillText(thirdLabel, cx, cy+r3+22*dpr);
+
+    // beat-envelope strip along the bottom
+    ctx.strokeStyle='rgba(233,231,227,.30)'; ctx.lineWidth=1.5*dpr; ctx.beginPath();
+    const cyc=waveTop+waveH/2, span=2.2;                 // seconds shown
+    for(let i=0;i<=W;i++){
+      const tt=(i/W)*span + t/1000*0.6;
+      const env=Math.abs(Math.cos(Math.PI*d*tt));         // |cos(pi*d*t)| = beat envelope of two equal sines
+      const carrier=Math.sin(2*Math.PI*((A.f+B.f)/2)* (tt*0.012)); // slowed carrier, just texture
+      const y=cyc - env*carrier*waveH*0.5;
+      i===0?ctx.moveTo(i,y):ctx.lineTo(i,y);
+    }
+    ctx.stroke();
+
+    // readout text
+    intervalEl.textContent=info.name; intervalEl.style.color=info.col;
+    poeticEl.textContent=info.poem;
+    freqsEl.textContent = Math.round(Math.min(A.f,B.f))+' · '+Math.round(Math.max(A.f,B.f))+' Hz    ratio '+info.r.toFixed(3)+'    Δ '+Math.round(d)+' Hz';
+
+    requestAnimationFrame(frame);
+  }
+
+  size(); addEventListener('resize',size,{passive:true});
+  document.addEventListener('visibilitychange',()=>{ if(actx){ document.hidden?actx.suspend():actx.resume(); }});
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
