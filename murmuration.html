@@ -5,32 +5,61 @@
   <title>Murmuration</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #000; cursor: none; }
     canvas { display: block; }
+    #ui {
+      position: fixed;
+      top: 22px;
+      right: 28px;
+      text-align: right;
+      pointer-events: none;
+      font-family: 'Georgia', serif;
+    }
+    #score-label {
+      font-size: 10px;
+      letter-spacing: 0.25em;
+      text-transform: uppercase;
+      color: rgba(255,255,255,0.2);
+      margin-bottom: 2px;
+    }
+    #score-val {
+      font-size: 36px;
+      font-weight: normal;
+      color: rgba(255,255,255,0.7);
+      line-height: 1;
+      transition: color 0.3s;
+    }
+    #score-val.scoring { color: rgba(120, 220, 255, 0.9); }
     #hint {
       position: fixed;
       bottom: 24px;
       left: 50%;
       transform: translateX(-50%);
       font-family: 'Georgia', serif;
-      font-size: 12px;
-      color: rgba(255,255,255,0.25);
-      letter-spacing: 0.2em;
+      font-size: 11px;
+      color: rgba(255,255,255,0.22);
+      letter-spacing: 0.22em;
       text-transform: uppercase;
       pointer-events: none;
-      transition: opacity 2s;
+      transition: opacity 3s;
+      white-space: nowrap;
     }
     #hint.hidden { opacity: 0; }
   </style>
 </head>
 <body>
 <canvas id="c"></canvas>
-<div id="hint">click to summon the hawk · move mouse to disturb</div>
+<div id="ui">
+  <div id="score-label">Score</div>
+  <div id="score-val">0</div>
+</div>
+<div id="hint">move to shepherd · click to dive</div>
 
 <script>
-const canvas  = document.getElementById('c');
-const ctx     = canvas.getContext('2d');
-const hint    = document.getElementById('hint');
+const canvas   = document.getElementById('c');
+const ctx      = canvas.getContext('2d');
+const scoreVal = document.getElementById('score-val');
+const hint     = document.getElementById('hint');
 
 let W, H;
 function resize() {
@@ -42,25 +71,22 @@ window.addEventListener('resize', resize);
 
 // ── Config ────────────────────────────────────────────────────────────────────
 const N            = 900;
-const MAX_SPEED    = 2.8;
+const MAX_SPEED    = 2.6;
 const MAX_FORCE    = 0.06;
-const SEP_RADIUS   = 28;
-const ALIGN_RADIUS = 55;
-const COH_RADIUS   = 55;
-const SEP_WEIGHT   = 1.6;
-const ALI_WEIGHT   = 1.0;
-const COH_WEIGHT   = 1.0;
+const SEP_RADIUS   = 26;
+const ALIGN_RADIUS = 54;
 const CELL_SIZE    = 60;
 
 // ── Boids ─────────────────────────────────────────────────────────────────────
-const px = new Float32Array(N);
-const py = new Float32Array(N);
-const vx = new Float32Array(N);
-const vy = new Float32Array(N);
+const px   = new Float32Array(N);
+const py   = new Float32Array(N);
+const vx   = new Float32Array(N);
+const vy   = new Float32Array(N);
+const dens = new Uint8Array(N);   // neighbor count — drives color
 
 for (let i = 0; i < N; i++) {
-  px[i] = Math.random() * W;
-  py[i] = Math.random() * H;
+  px[i] = W * 0.2 + Math.random() * W * 0.6;
+  py[i] = H * 0.2 + Math.random() * H * 0.6;
   const a = Math.random() * Math.PI * 2;
   const s = 1 + Math.random() * 1.5;
   vx[i] = Math.cos(a) * s;
@@ -70,14 +96,10 @@ for (let i = 0; i < N; i++) {
 // ── Spatial grid ──────────────────────────────────────────────────────────────
 let grid = new Map();
 
-function gridKey(x, y) {
-  return (Math.floor(x / CELL_SIZE) | 0) * 10000 + (Math.floor(y / CELL_SIZE) | 0);
-}
-
 function buildGrid() {
   grid.clear();
   for (let i = 0; i < N; i++) {
-    const k = gridKey(px[i], py[i]);
+    const k = (Math.floor(px[i] / CELL_SIZE) | 0) * 10000 + (Math.floor(py[i] / CELL_SIZE) | 0);
     if (!grid.has(k)) grid.set(k, []);
     grid.get(k).push(i);
   }
@@ -89,11 +111,9 @@ function neighbors(x, y, radius) {
   const cx     = Math.floor(x / CELL_SIZE);
   const cy     = Math.floor(y / CELL_SIZE);
   const r2     = radius * radius;
-
   for (let dx = -cells; dx <= cells; dx++) {
     for (let dy = -cells; dy <= cells; dy++) {
-      const k = (cx + dx) * 10000 + (cy + dy);
-      const cell = grid.get(k);
+      const cell = grid.get((cx + dx) * 10000 + (cy + dy));
       if (!cell) continue;
       for (const j of cell) {
         const ddx = px[j] - x;
@@ -105,33 +125,36 @@ function neighbors(x, y, radius) {
   return result;
 }
 
-// ── Predator ─────────────────────────────────────────────────────────────────
-let hawk = null; // { x, y, vx, vy, active }
-let hawkTimer = 0;
-
-function summonHawk(x, y) {
-  hawk = { x, y, vx: 0, vy: 0, active: true, born: performance.now() };
-  hawkTimer = 0;
-}
-
-// ── Mouse disturbance ─────────────────────────────────────────────────────────
-let mouse = { x: -9999, y: -9999, active: false };
+// ── Hawk (mouse) ──────────────────────────────────────────────────────────────
+let mouse    = { x: -999, y: -999, inside: false };
+let diving   = false;
+let diveTimer = 0;
+const DIVE_DURATION = 35;
 
 canvas.addEventListener('mousemove', e => {
   mouse.x = e.clientX;
   mouse.y = e.clientY;
-  mouse.active = true;
-});
-
-canvas.addEventListener('mouseleave', () => { mouse.active = false; });
-
-canvas.addEventListener('click', e => {
-  summonHawk(e.clientX, e.clientY);
+  mouse.inside = true;
   hint.classList.add('hidden');
 });
+canvas.addEventListener('mouseleave', () => { mouse.inside = false; });
+canvas.addEventListener('click', () => {
+  diving = true;
+  diveTimer = DIVE_DURATION;
+});
 
-// Hide hint after 5s
-setTimeout(() => hint.classList.add('hidden'), 5000);
+setTimeout(() => hint.classList.add('hidden'), 6000);
+
+// ── Score ─────────────────────────────────────────────────────────────────────
+let score       = 0;
+let frameCount  = 0;
+let lastIsolated = 0;
+
+function countIsolated() {
+  let n = 0;
+  for (let i = 0; i < N; i++) if (dens[i] < 4) n++;
+  return n;
+}
 
 // ── Vector helpers ────────────────────────────────────────────────────────────
 function limit(x, y, max) {
@@ -139,7 +162,6 @@ function limit(x, y, max) {
   if (m > max) return [x / m * max, y / m * max];
   return [x, y];
 }
-
 function normalize(x, y) {
   const m = Math.sqrt(x * x + y * y) || 1;
   return [x / m, y / m];
@@ -148,52 +170,27 @@ function normalize(x, y) {
 // ── Update ────────────────────────────────────────────────────────────────────
 function update() {
   buildGrid();
+  frameCount++;
 
-  // Move hawk toward densest cluster
-  if (hawk && hawk.active) {
-    hawkTimer++;
-
-    // Find center of mass of nearest 80 boids
-    let cx = 0, cy = 0, count = 0;
-    const near = neighbors(hawk.x, hawk.y, 200);
-    const sample = near.slice(0, 80);
-    for (const j of sample) { cx += px[j]; cy += py[j]; count++; }
-    if (count > 0) {
-      cx /= count; cy /= count;
-      const [ndx, ndy] = normalize(cx - hawk.x, cy - hawk.y);
-      hawk.vx += ndx * 0.18;
-      hawk.vy += ndy * 0.18;
-    }
-    [hawk.vx, hawk.vy] = limit(hawk.vx, hawk.vy, 5.5);
-    hawk.x += hawk.vx;
-    hawk.y += hawk.vy;
-
-    // Despawn after ~8 seconds or when offscreen
-    if (hawkTimer > 480 ||
-        hawk.x < -80 || hawk.x > W + 80 ||
-        hawk.y < -80 || hawk.y > H + 80) {
-      hawk = null;
-    }
-  }
+  if (diveTimer > 0) diveTimer--;
+  else diving = false;
 
   for (let i = 0; i < N; i++) {
     const xi = px[i], yi = py[i];
+    const nbrs = neighbors(xi, yi, ALIGN_RADIUS);
 
-    // Get neighbors for each radius
-    const sepNbrs = neighbors(xi, yi, SEP_RADIUS);
-    const alNbrs  = neighbors(xi, yi, ALIGN_RADIUS);
+    dens[i] = Math.min(255, nbrs.length);
 
     let sx = 0, sy = 0, sepCount = 0;
-    let ax = 0, ay = 0, aliCount = 0;
+    let ax = 0, ay = 0;
     let cohx = 0, cohy = 0, cohCount = 0;
 
-    for (const j of alNbrs) {
+    for (const j of nbrs) {
       if (j === i) continue;
       const dx = xi - px[j];
       const dy = yi - py[j];
       const d2 = dx * dx + dy * dy;
 
-      // Separation (closer = stronger)
       if (d2 < SEP_RADIUS * SEP_RADIUS && d2 > 0) {
         const d = Math.sqrt(d2);
         sx += (dx / d) / d;
@@ -201,91 +198,74 @@ function update() {
         sepCount++;
       }
 
-      // Alignment
-      ax += vx[j]; ay += vy[j]; aliCount++;
-
-      // Cohesion
+      ax += vx[j]; ay += vy[j];
       cohx += px[j]; cohy += py[j]; cohCount++;
     }
 
     let fx = 0, fy = 0;
 
-    // Separation
     if (sepCount > 0) {
-      [fx, fy] = [fx + sx / sepCount * SEP_WEIGHT, fy + sy / sepCount * SEP_WEIGHT];
+      [fx, fy] = [fx + sx / sepCount * 1.7, fy + sy / sepCount * 1.7];
     }
-
-    // Alignment — steer toward average heading
-    if (aliCount > 0) {
-      const [nx, ny] = normalize(ax / aliCount, ay / aliCount);
-      fx += (nx * MAX_SPEED - vx[i]) * ALI_WEIGHT * 0.1;
-      fy += (ny * MAX_SPEED - vy[i]) * ALI_WEIGHT * 0.1;
-    }
-
-    // Cohesion — steer toward center of mass
     if (cohCount > 0) {
-      const [nx, ny] = normalize(cohx / cohCount - xi, cohy / cohCount - yi);
-      fx += nx * COH_WEIGHT * 0.05;
-      fy += ny * COH_WEIGHT * 0.05;
+      const [nx, ny] = normalize(ax / cohCount, ay / cohCount);
+      fx += (nx * MAX_SPEED - vx[i]) * 0.1;
+      fy += (ny * MAX_SPEED - vy[i]) * 0.1;
+      const [cx, cy] = normalize(cohx / cohCount - xi, cohy / cohCount - yi);
+      fx += cx * 0.05;
+      fy += cy * 0.05;
     }
 
-    // Hawk avoidance — strong exponential repulsion
-    if (hawk && hawk.active) {
-      const dx = xi - hawk.x;
-      const dy = yi - hawk.y;
-      const d2 = dx * dx + dy * dy;
-      const hawkR = 160;
-      if (d2 < hawkR * hawkR && d2 > 0) {
-        const d = Math.sqrt(d2);
-        const strength = (1 - d / hawkR) * 3.5;
-        fx += (dx / d) * strength;
-        fy += (dy / d) * strength;
-      }
-    }
-
-    // Mouse soft repulsion
-    if (mouse.active) {
+    // Hawk repulsion
+    if (mouse.inside) {
       const dx = xi - mouse.x;
       const dy = yi - mouse.y;
       const d2 = dx * dx + dy * dy;
-      const mouseR = 90;
-      if (d2 < mouseR * mouseR && d2 > 0) {
+
+      const normalR = 100;
+      const diveR   = 220;
+      const r       = diving ? diveR : normalR;
+      const strength = diving ? 4.5 : 0.7;
+
+      if (d2 < r * r && d2 > 0) {
         const d = Math.sqrt(d2);
-        const strength = (1 - d / mouseR) * 0.6;
-        fx += (dx / d) * strength;
-        fy += (dy / d) * strength;
+        const f = (1 - d / r) * strength;
+        fx += (dx / d) * f;
+        fy += (dy / d) * f;
       }
     }
 
-    // Edge avoidance — soft walls
-    const margin = 80;
-    const edgeF  = 0.4;
-    if (xi < margin)     fx += edgeF * (1 - xi / margin);
-    if (xi > W - margin) fx -= edgeF * (1 - (W - xi) / margin);
-    if (yi < margin)     fy += edgeF * (1 - yi / margin);
-    if (yi > H - margin) fy -= edgeF * (1 - (H - yi) / margin);
+    // Edge avoidance
+    const mg = 80, ef = 0.4;
+    if (xi < mg)     fx += ef * (1 - xi / mg);
+    if (xi > W - mg) fx -= ef * (1 - (W - xi) / mg);
+    if (yi < mg)     fy += ef * (1 - yi / mg);
+    if (yi > H - mg) fy -= ef * (1 - (H - yi) / mg);
 
-    // Apply force
     [fx, fy] = limit(fx, fy, MAX_FORCE * 3);
     vx[i] += fx;
     vy[i] += fy;
     [vx[i], vy[i]] = limit(vx[i], vy[i], MAX_SPEED);
-
-    // Integrate
     px[i] += vx[i];
     py[i] += vy[i];
 
-    // Hard wrap (only at extreme edges)
     if (px[i] < -10) px[i] = W + 10;
     if (px[i] > W + 10) px[i] = -10;
     if (py[i] < -10) py[i] = H + 10;
     if (py[i] > H + 10) py[i] = -10;
   }
+
+  // Score: every second, count isolated boids
+  if (frameCount % 60 === 0) {
+    const isolated = countIsolated();
+    const pts = Math.floor(isolated / 25);
+    score += pts;
+    scoreVal.textContent = score;
+    scoreVal.className = pts > 0 ? 'scoring' : '';
+  }
 }
 
 // ── Draw ──────────────────────────────────────────────────────────────────────
-
-// Off-screen canvas for boids (additive blend)
 const bCanvas = document.createElement('canvas');
 const bCtx    = bCanvas.getContext('2d');
 
@@ -293,73 +273,82 @@ function draw() {
   bCanvas.width  = W;
   bCanvas.height = H;
 
-  // Fade trail on main canvas
-  ctx.fillStyle = 'rgba(2, 3, 12, 0.32)';
+  // Slow dark fade — keeps trails
+  ctx.fillStyle = 'rgba(1, 2, 10, 0.28)';
   ctx.fillRect(0, 0, W, H);
 
-  // Draw boids to offscreen canvas
   bCtx.clearRect(0, 0, W, H);
 
-  for (let i = 0; i < N; i++) {
-    const speed  = Math.sqrt(vx[i] * vx[i] + vy[i] * vy[i]);
-    const angle  = Math.atan2(vy[i], vx[i]);
-    const t      = speed / MAX_SPEED; // 0–1
+  const t = frameCount;
 
-    // Color: slow/dense → deep teal, fast → amber-gold
+  for (let i = 0; i < N; i++) {
+    const speed = Math.sqrt(vx[i] * vx[i] + vy[i] * vy[i]);
+    const angle = Math.atan2(vy[i], vx[i]);
+    const d     = Math.min(1, dens[i] / 22);   // density 0–1
+    const s     = speed / MAX_SPEED;            // speed 0–1
+
     // Iridescent starling palette
-    const r = Math.round(20  + t * 220);
-    const g = Math.round(140 + t * 60);
-    const b = Math.round(180 - t * 140);
-    const a = 0.55 + t * 0.35;
+    // Dense + slow  → deep teal  rgb(25, 190, 215)
+    // Dense + fast  → bright cyan rgb(50, 230, 255)
+    // Sparse + fast → amber-gold  rgb(245, 185, 40)
+    // Sparse + slow → dark indigo rgb(15, 45, 105) — barely visible
+    const shimmer = 0.78 + 0.22 * Math.sin(t * 0.0025 + i * 0.19);
+
+    const r = Math.round((15  + d * 35  + (1 - d) * s * 230) * shimmer);
+    const g = Math.round((45  + d * 145 + (1 - d) * s * 140) * shimmer);
+    const b = Math.round((105 + d * 110 - (1 - d) * s * 65)  * shimmer);
+    const a = (0.25 + d * 0.55 + s * 0.2) * shimmer;
 
     bCtx.save();
     bCtx.translate(px[i], py[i]);
     bCtx.rotate(angle);
 
-    // Elongated teardrop — head forward
     bCtx.beginPath();
-    bCtx.moveTo(4, 0);
-    bCtx.lineTo(-3, 1.4);
+    bCtx.moveTo(4.5, 0);
+    bCtx.lineTo(-3, 1.5);
     bCtx.lineTo(-2, 0);
-    bCtx.lineTo(-3, -1.4);
+    bCtx.lineTo(-3, -1.5);
     bCtx.closePath();
     bCtx.fillStyle = `rgba(${r},${g},${b},${a})`;
     bCtx.fill();
     bCtx.restore();
   }
 
-  // Composite boids with additive blending
   ctx.globalCompositeOperation = 'lighter';
   ctx.drawImage(bCanvas, 0, 0);
   ctx.globalCompositeOperation = 'source-over';
 
-  // Draw hawk
-  if (hawk && hawk.active) {
-    const age   = (performance.now() - hawk.born) / 1000;
-    const alpha = Math.min(1, age * 2) * Math.max(0, 1 - Math.max(0, age - 6) * 2);
-    const angle = Math.atan2(hawk.vy, hawk.vx);
+  // Draw hawk cursor
+  if (mouse.inside) {
+    const pulse = diving
+      ? 1 + 0.4 * Math.sin(frameCount * 0.5)
+      : 0.85 + 0.15 * Math.sin(frameCount * 0.08);
 
     ctx.save();
-    ctx.translate(hawk.x, hawk.y);
-    ctx.rotate(angle);
-    ctx.globalAlpha = alpha;
+    ctx.translate(mouse.x, mouse.y);
+    ctx.scale(pulse, pulse);
 
-    // Hawk: sharp angular silhouette
+    // Hawk silhouette — angled slightly
     ctx.beginPath();
-    ctx.moveTo(14, 0);           // beak
-    ctx.lineTo(-8, -14);         // left wingtip
-    ctx.lineTo(-4, -2);          // left wing root
-    ctx.lineTo(-10, 0);          // tail
-    ctx.lineTo(-4, 2);           // right wing root
-    ctx.lineTo(-8, 14);          // right wingtip
+    ctx.moveTo(10, 0);
+    ctx.lineTo(-7, -12);
+    ctx.lineTo(-4, -1.5);
+    ctx.lineTo(-9, 0);
+    ctx.lineTo(-4, 1.5);
+    ctx.lineTo(-7, 12);
     ctx.closePath();
-    ctx.fillStyle = 'rgba(255, 60, 30, 0.9)';
-    ctx.shadowColor = 'rgba(255, 60, 30, 0.6)';
-    ctx.shadowBlur  = 18;
+
+    if (diving) {
+      ctx.fillStyle = 'rgba(255, 80, 30, 0.95)';
+      ctx.shadowColor = 'rgba(255, 80, 30, 0.7)';
+      ctx.shadowBlur = 22;
+    } else {
+      ctx.fillStyle = 'rgba(255, 160, 80, 0.7)';
+      ctx.shadowColor = 'rgba(255, 140, 60, 0.4)';
+      ctx.shadowBlur = 12;
+    }
     ctx.fill();
     ctx.restore();
-
-    ctx.globalAlpha = 1;
   }
 }
 
@@ -368,14 +357,6 @@ function loop() {
   update();
   draw();
   requestAnimationFrame(loop);
-}
-
-// Initial scatter toward center so flock forms quickly
-for (let i = 0; i < N; i++) {
-  const cx = W / 2 + (Math.random() - 0.5) * W * 0.6;
-  const cy = H / 2 + (Math.random() - 0.5) * H * 0.6;
-  px[i] = cx;
-  py[i] = cy;
 }
 
 loop();
