@@ -5,8 +5,9 @@
   <title>Murmuration</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body { width: 100%; height: 100%; overflow: hidden; background: #000; cursor: none; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
     canvas { display: block; }
+
     #ui {
       position: fixed;
       top: 22px;
@@ -25,41 +26,54 @@
     #score-val {
       font-size: 36px;
       font-weight: normal;
-      color: rgba(255,255,255,0.7);
+      color: rgba(255,255,255,0.65);
       line-height: 1;
       transition: color 0.3s;
     }
-    #score-val.scoring { color: rgba(120, 220, 255, 0.9); }
-    #hint {
+    #score-val.scoring { color: rgba(100, 220, 255, 0.95); }
+
+    #mode-btn {
       position: fixed;
       bottom: 24px;
       left: 50%;
       transform: translateX(-50%);
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 20px;
+      padding: 7px 18px;
       font-family: 'Georgia', serif;
       font-size: 11px;
-      color: rgba(255,255,255,0.22);
-      letter-spacing: 0.22em;
+      letter-spacing: 0.2em;
       text-transform: uppercase;
-      pointer-events: none;
-      transition: opacity 3s;
-      white-space: nowrap;
+      color: rgba(255,255,255,0.35);
+      cursor: pointer;
+      transition: background 0.2s, color 0.2s, border-color 0.2s;
+      user-select: none;
     }
-    #hint.hidden { opacity: 0; }
+    #mode-btn:hover {
+      background: rgba(255,255,255,0.1);
+      color: rgba(255,255,255,0.6);
+      border-color: rgba(255,255,255,0.25);
+    }
+
+    body.mouse-mode { cursor: none; }
   </style>
 </head>
 <body>
 <canvas id="c"></canvas>
+
 <div id="ui">
   <div id="score-label">Score</div>
   <div id="score-val">0</div>
 </div>
-<div id="hint">move to shepherd · click to dive</div>
+
+<button id="mode-btn">Hawk: Auto</button>
 
 <script>
 const canvas   = document.getElementById('c');
 const ctx      = canvas.getContext('2d');
 const scoreVal = document.getElementById('score-val');
-const hint     = document.getElementById('hint');
+const modeBtn  = document.getElementById('mode-btn');
 
 let W, H;
 function resize() {
@@ -68,6 +82,19 @@ function resize() {
 }
 resize();
 window.addEventListener('resize', resize);
+
+// ── Mode ──────────────────────────────────────────────────────────────────────
+// 'auto' = click to summon hawk, it hunts the flock
+// 'mouse' = mouse IS the hawk, click to dive
+let hawkMode = 'auto';
+
+modeBtn.addEventListener('click', () => {
+  hawkMode = hawkMode === 'auto' ? 'mouse' : 'auto';
+  modeBtn.textContent = hawkMode === 'auto' ? 'Hawk: Auto' : 'Hawk: Mouse';
+  document.body.classList.toggle('mouse-mode', hawkMode === 'mouse');
+  // Clear auto hawk if switching away
+  if (hawkMode === 'mouse') autoHawk = null;
+});
 
 // ── Config ────────────────────────────────────────────────────────────────────
 const N            = 900;
@@ -82,7 +109,7 @@ const px   = new Float32Array(N);
 const py   = new Float32Array(N);
 const vx   = new Float32Array(N);
 const vy   = new Float32Array(N);
-const dens = new Uint8Array(N);   // neighbor count — drives color
+const dens = new Uint8Array(N);
 
 for (let i = 0; i < N; i++) {
   px[i] = W * 0.2 + Math.random() * W * 0.6;
@@ -95,7 +122,6 @@ for (let i = 0; i < N; i++) {
 
 // ── Spatial grid ──────────────────────────────────────────────────────────────
 let grid = new Map();
-
 function buildGrid() {
   grid.clear();
   for (let i = 0; i < N; i++) {
@@ -104,7 +130,6 @@ function buildGrid() {
     grid.get(k).push(i);
   }
 }
-
 function neighbors(x, y, radius) {
   const result = [];
   const cells  = Math.ceil(radius / CELL_SIZE);
@@ -116,8 +141,7 @@ function neighbors(x, y, radius) {
       const cell = grid.get((cx + dx) * 10000 + (cy + dy));
       if (!cell) continue;
       for (const j of cell) {
-        const ddx = px[j] - x;
-        const ddy = py[j] - y;
+        const ddx = px[j] - x, ddy = py[j] - y;
         if (ddx * ddx + ddy * ddy < r2) result.push(j);
       }
     }
@@ -125,42 +149,61 @@ function neighbors(x, y, radius) {
   return result;
 }
 
-// ── Hawk (mouse) ──────────────────────────────────────────────────────────────
-let mouse    = { x: -999, y: -999, inside: false };
-let diving   = false;
+// ── Auto hawk ─────────────────────────────────────────────────────────────────
+let autoHawk  = null;
+let hawkTimer = 0;
+
+function summonAutoHawk(x, y) {
+  autoHawk = { x, y, vx: 0, vy: 0, born: performance.now() };
+  hawkTimer = 0;
+}
+
+// ── Mouse hawk ────────────────────────────────────────────────────────────────
+let mouse     = { x: W / 2, y: H / 2, inside: false };
+let mouseVX   = 0, mouseVY = 0;
+let hawkFaceAngle = 0; // smoothed facing direction
+let diving    = false;
 let diveTimer = 0;
 const DIVE_DURATION = 35;
 
 canvas.addEventListener('mousemove', e => {
+  const dx = e.clientX - mouse.x;
+  const dy = e.clientY - mouse.y;
+  mouseVX = dx;
+  mouseVY = dy;
+  // Update facing angle only when moving
+  if (dx * dx + dy * dy > 1) {
+    hawkFaceAngle = Math.atan2(dy, dx);
+  }
   mouse.x = e.clientX;
   mouse.y = e.clientY;
   mouse.inside = true;
-  hint.classList.add('hidden');
 });
 canvas.addEventListener('mouseleave', () => { mouse.inside = false; });
-canvas.addEventListener('click', () => {
-  diving = true;
-  diveTimer = DIVE_DURATION;
+
+canvas.addEventListener('click', e => {
+  if (hawkMode === 'auto') {
+    summonAutoHawk(e.clientX, e.clientY);
+  } else {
+    diving = true;
+    diveTimer = DIVE_DURATION;
+  }
 });
 
-setTimeout(() => hint.classList.add('hidden'), 6000);
-
 // ── Score ─────────────────────────────────────────────────────────────────────
-let score       = 0;
-let frameCount  = 0;
-let lastIsolated = 0;
+let score      = 0;
+let frameCount = 0;
 
 function countIsolated() {
   let n = 0;
-  for (let i = 0; i < N; i++) if (dens[i] < 4) n++;
+  for (let i = 0; i < N; i++) if (dens[i] < 6) n++;
   return n;
 }
 
 // ── Vector helpers ────────────────────────────────────────────────────────────
 function limit(x, y, max) {
   const m = Math.sqrt(x * x + y * y);
-  if (m > max) return [x / m * max, y / m * max];
-  return [x, y];
+  return m > max ? [x / m * max, y / m * max] : [x, y];
 }
 function normalize(x, y) {
   const m = Math.sqrt(x * x + y * y) || 1;
@@ -175,10 +218,31 @@ function update() {
   if (diveTimer > 0) diveTimer--;
   else diving = false;
 
+  // Move auto hawk
+  if (autoHawk) {
+    hawkTimer++;
+    let cx = 0, cy = 0, count = 0;
+    const near = neighbors(autoHawk.x, autoHawk.y, 220).slice(0, 80);
+    for (const j of near) { cx += px[j]; cy += py[j]; count++; }
+    if (count > 0) {
+      cx /= count; cy /= count;
+      const [ndx, ndy] = normalize(cx - autoHawk.x, cy - autoHawk.y);
+      autoHawk.vx += ndx * 0.2;
+      autoHawk.vy += ndy * 0.2;
+    }
+    [autoHawk.vx, autoHawk.vy] = limit(autoHawk.vx, autoHawk.vy, 5.5);
+    autoHawk.x += autoHawk.vx;
+    autoHawk.y += autoHawk.vy;
+    if (hawkTimer > 500 ||
+        autoHawk.x < -80 || autoHawk.x > W + 80 ||
+        autoHawk.y < -80 || autoHawk.y > H + 80) {
+      autoHawk = null;
+    }
+  }
+
   for (let i = 0; i < N; i++) {
     const xi = px[i], yi = py[i];
     const nbrs = neighbors(xi, yi, ALIGN_RADIUS);
-
     dens[i] = Math.min(255, nbrs.length);
 
     let sx = 0, sy = 0, sepCount = 0;
@@ -187,51 +251,49 @@ function update() {
 
     for (const j of nbrs) {
       if (j === i) continue;
-      const dx = xi - px[j];
-      const dy = yi - py[j];
+      const dx = xi - px[j], dy = yi - py[j];
       const d2 = dx * dx + dy * dy;
 
       if (d2 < SEP_RADIUS * SEP_RADIUS && d2 > 0) {
         const d = Math.sqrt(d2);
-        sx += (dx / d) / d;
-        sy += (dy / d) / d;
-        sepCount++;
+        sx += (dx / d) / d; sy += (dy / d) / d; sepCount++;
       }
-
       ax += vx[j]; ay += vy[j];
       cohx += px[j]; cohy += py[j]; cohCount++;
     }
 
     let fx = 0, fy = 0;
-
-    if (sepCount > 0) {
-      [fx, fy] = [fx + sx / sepCount * 1.7, fy + sy / sepCount * 1.7];
-    }
-    if (cohCount > 0) {
+    if (sepCount > 0)  { fx += sx / sepCount * 1.7;    fy += sy / sepCount * 1.7; }
+    if (cohCount > 0)  {
       const [nx, ny] = normalize(ax / cohCount, ay / cohCount);
       fx += (nx * MAX_SPEED - vx[i]) * 0.1;
       fy += (ny * MAX_SPEED - vy[i]) * 0.1;
-      const [cx, cy] = normalize(cohx / cohCount - xi, cohy / cohCount - yi);
-      fx += cx * 0.05;
-      fy += cy * 0.05;
+      const [cx2, cy2] = normalize(cohx / cohCount - xi, cohy / cohCount - yi);
+      fx += cx2 * 0.05; fy += cy2 * 0.05;
     }
 
-    // Hawk repulsion
-    if (mouse.inside) {
-      const dx = xi - mouse.x;
-      const dy = yi - mouse.y;
+    // Auto hawk repulsion
+    if (autoHawk) {
+      const dx = xi - autoHawk.x, dy = yi - autoHawk.y;
       const d2 = dx * dx + dy * dy;
-
-      const normalR = 100;
-      const diveR   = 220;
-      const r       = diving ? diveR : normalR;
-      const strength = diving ? 4.5 : 0.7;
-
+      const r  = 170;
       if (d2 < r * r && d2 > 0) {
         const d = Math.sqrt(d2);
-        const f = (1 - d / r) * strength;
-        fx += (dx / d) * f;
-        fy += (dy / d) * f;
+        const f = (1 - d / r) * 4.0;
+        fx += (dx / d) * f; fy += (dy / d) * f;
+      }
+    }
+
+    // Mouse hawk repulsion
+    if (hawkMode === 'mouse' && mouse.inside) {
+      const dx = xi - mouse.x, dy = yi - mouse.y;
+      const d2 = dx * dx + dy * dy;
+      const r  = diving ? 230 : 105;
+      const f  = diving ? 5.0 : 0.75;
+      if (d2 < r * r && d2 > 0) {
+        const d = Math.sqrt(d2);
+        fx += (dx / d) * f * (1 - d / r);
+        fy += (dy / d) * f * (1 - d / r);
       }
     }
 
@@ -243,22 +305,19 @@ function update() {
     if (yi > H - mg) fy -= ef * (1 - (H - yi) / mg);
 
     [fx, fy] = limit(fx, fy, MAX_FORCE * 3);
-    vx[i] += fx;
-    vy[i] += fy;
+    vx[i] += fx; vy[i] += fy;
     [vx[i], vy[i]] = limit(vx[i], vy[i], MAX_SPEED);
-    px[i] += vx[i];
-    py[i] += vy[i];
-
+    px[i] += vx[i]; py[i] += vy[i];
     if (px[i] < -10) px[i] = W + 10;
     if (px[i] > W + 10) px[i] = -10;
     if (py[i] < -10) py[i] = H + 10;
     if (py[i] > H + 10) py[i] = -10;
   }
 
-  // Score: every second, count isolated boids
+  // Score every second
   if (frameCount % 60 === 0) {
     const isolated = countIsolated();
-    const pts = Math.floor(isolated / 25);
+    const pts = Math.floor(isolated / 18);
     score += pts;
     scoreVal.textContent = score;
     scoreVal.className = pts > 0 ? 'scoring' : '';
@@ -269,29 +328,52 @@ function update() {
 const bCanvas = document.createElement('canvas');
 const bCtx    = bCanvas.getContext('2d');
 
+function drawHawkShape(c, x, y, angle, isDiving) {
+  const pulse = isDiving
+    ? 1 + 0.35 * Math.sin(frameCount * 0.5)
+    : 0.9 + 0.1 * Math.sin(frameCount * 0.07);
+
+  c.save();
+  c.translate(x, y);
+  c.rotate(angle);
+  c.scale(pulse, pulse);
+
+  c.beginPath();
+  c.moveTo(12, 0);          // beak (points in direction of travel)
+  c.lineTo(-6, -13);        // left wingtip
+  c.lineTo(-3, -1.5);       // left wing join
+  c.lineTo(-9, 0);          // tail
+  c.lineTo(-3, 1.5);        // right wing join
+  c.lineTo(-6, 13);         // right wingtip
+  c.closePath();
+
+  if (isDiving) {
+    c.fillStyle = 'rgba(255, 75, 30, 0.95)';
+    c.shadowColor = 'rgba(255, 75, 30, 0.7)';
+    c.shadowBlur = 24;
+  } else {
+    c.fillStyle = 'rgba(255, 155, 70, 0.8)';
+    c.shadowColor = 'rgba(255, 140, 50, 0.45)';
+    c.shadowBlur = 14;
+  }
+  c.fill();
+  c.restore();
+}
+
 function draw() {
   bCanvas.width  = W;
   bCanvas.height = H;
-
-  // Slow dark fade — keeps trails
   ctx.fillStyle = 'rgba(1, 2, 10, 0.28)';
   ctx.fillRect(0, 0, W, H);
 
   bCtx.clearRect(0, 0, W, H);
-
   const t = frameCount;
 
   for (let i = 0; i < N; i++) {
     const speed = Math.sqrt(vx[i] * vx[i] + vy[i] * vy[i]);
     const angle = Math.atan2(vy[i], vx[i]);
-    const d     = Math.min(1, dens[i] / 22);   // density 0–1
-    const s     = speed / MAX_SPEED;            // speed 0–1
-
-    // Iridescent starling palette
-    // Dense + slow  → deep teal  rgb(25, 190, 215)
-    // Dense + fast  → bright cyan rgb(50, 230, 255)
-    // Sparse + fast → amber-gold  rgb(245, 185, 40)
-    // Sparse + slow → dark indigo rgb(15, 45, 105) — barely visible
+    const d     = Math.min(1, dens[i] / 22);
+    const s     = speed / MAX_SPEED;
     const shimmer = 0.78 + 0.22 * Math.sin(t * 0.0025 + i * 0.19);
 
     const r = Math.round((15  + d * 35  + (1 - d) * s * 230) * shimmer);
@@ -302,7 +384,6 @@ function draw() {
     bCtx.save();
     bCtx.translate(px[i], py[i]);
     bCtx.rotate(angle);
-
     bCtx.beginPath();
     bCtx.moveTo(4.5, 0);
     bCtx.lineTo(-3, 1.5);
@@ -318,37 +399,19 @@ function draw() {
   ctx.drawImage(bCanvas, 0, 0);
   ctx.globalCompositeOperation = 'source-over';
 
-  // Draw hawk cursor
-  if (mouse.inside) {
-    const pulse = diving
-      ? 1 + 0.4 * Math.sin(frameCount * 0.5)
-      : 0.85 + 0.15 * Math.sin(frameCount * 0.08);
+  // Auto hawk
+  if (autoHawk) {
+    const hawkAngle = Math.atan2(autoHawk.vy, autoHawk.vx);
+    const age   = (performance.now() - autoHawk.born) / 1000;
+    const alpha = Math.min(1, age * 2) * Math.max(0, 1 - Math.max(0, age - 7) * 1.5);
+    ctx.globalAlpha = alpha;
+    drawHawkShape(ctx, autoHawk.x, autoHawk.y, hawkAngle, false);
+    ctx.globalAlpha = 1;
+  }
 
-    ctx.save();
-    ctx.translate(mouse.x, mouse.y);
-    ctx.scale(pulse, pulse);
-
-    // Hawk silhouette — angled slightly
-    ctx.beginPath();
-    ctx.moveTo(10, 0);
-    ctx.lineTo(-7, -12);
-    ctx.lineTo(-4, -1.5);
-    ctx.lineTo(-9, 0);
-    ctx.lineTo(-4, 1.5);
-    ctx.lineTo(-7, 12);
-    ctx.closePath();
-
-    if (diving) {
-      ctx.fillStyle = 'rgba(255, 80, 30, 0.95)';
-      ctx.shadowColor = 'rgba(255, 80, 30, 0.7)';
-      ctx.shadowBlur = 22;
-    } else {
-      ctx.fillStyle = 'rgba(255, 160, 80, 0.7)';
-      ctx.shadowColor = 'rgba(255, 140, 60, 0.4)';
-      ctx.shadowBlur = 12;
-    }
-    ctx.fill();
-    ctx.restore();
+  // Mouse hawk
+  if (hawkMode === 'mouse' && mouse.inside) {
+    drawHawkShape(ctx, mouse.x, mouse.y, hawkFaceAngle, diving);
   }
 }
 
