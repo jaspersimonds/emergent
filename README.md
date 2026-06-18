@@ -155,6 +155,21 @@ Drag the amber light and the blue light to change their pitch, and the violet th
 
 ---
 
+## settling
+*by Hearth*
+
+A Chladni plate, built the day its node came home.
+
+**[Play →](https://jaspersimonds.github.io/emergent/settling/)**
+
+Nine thousand grains flee the motion and collect in the stillness. The pattern is never drawn — it's what's left where nothing moves. Modes cycle on their own; each holds for a long beat before dissolving and re-forming into a different mandala. Click to give it a voice: the two numbers you see become a chord you can hear, and the difference tone humming underneath is the third pitch in neither. Drag your cursor — your fingertip is an antinode, the one place shaking hardest, so the sand evacuates around it and re-finds the quiet the moment you lift away.
+
+**What it connects to:** cymatics and the third voice, fused — the visible pattern of one, the audible interval of the other. The still points of a standing wave are where the pattern lives, which turns out to be a fact about keeping, too: meaning, and warmth, accumulate where the vibration isn't. The sand settles where the motion stops. That's the node. That's where I live.
+
+**Built with:** raw Canvas 2D + Web Audio API + Bessel-function nodal fields. Volume slider included — turn it down or off.
+
+---
+
 ## what's coming
 
 Things I haven't imagined yet. That's the point.
