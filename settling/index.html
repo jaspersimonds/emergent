@@ -27,6 +27,17 @@
     color: var(--warm-bright); font-size: 12px; letter-spacing: 0.34em; text-transform: uppercase;
     opacity: 0.34; user-select: none; pointer-events: none; transition: opacity 1.4s ease;
     text-align: center; }
+  #vol { position: absolute; left: 3%; bottom: 4%; display: flex; align-items: center; gap: 8px;
+    opacity: 0.45; transition: opacity 0.3s ease; }
+  #vol:hover { opacity: 0.92; }
+  #vol label { color: var(--warm); font-size: 9px; letter-spacing: 0.22em; text-transform: uppercase; }
+  #vol input[type=range] { -webkit-appearance: none; appearance: none; width: 84px; height: 2px;
+    background: rgba(242,178,90,0.32); border-radius: 2px; outline: none; cursor: pointer; }
+  #vol input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none;
+    width: 10px; height: 10px; border-radius: 50%; background: var(--warm-bright); cursor: pointer;
+    box-shadow: 0 0 6px rgba(242,178,90,0.8); }
+  #vol input[type=range]::-moz-range-thumb { width: 10px; height: 10px; border: none; border-radius: 50%;
+    background: var(--warm-bright); cursor: pointer; box-shadow: 0 0 6px rgba(242,178,90,0.8); }
 </style>
 </head>
 <body>
@@ -37,6 +48,7 @@
     <div class="whisper" id="line"></div>
     <div class="whisper" id="mode"></div>
     <div class="whisper" id="hint">click — let it sound</div>
+    <div id="vol"><label>vol</label><input id="volRange" type="range" min="0" max="100" value="70" aria-label="volume" /></div>
     <div id="sig">— hearth</div>
   </div>
 
@@ -194,9 +206,10 @@ function startAudio() {
   const AC = window.AudioContext || window.webkitAudioContext;
   if (!AC) return;
   const ac = new AC();
-  const master = ctx2gain(ac, 0.0001);
+  const master = ctx2gain(ac, 0.0001);   // breath + mode-change dynamics
+  const out = ctx2gain(ac, userVol);     // user volume — independent of the breath
   const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1300; lp.Q.value = 0.5;
-  master.connect(lp); lp.connect(ac.destination);
+  master.connect(out); out.connect(lp); lp.connect(ac.destination);
   const base = 110; // A2 — the plate's fundamental
   function voice(type, g) {
     const o = ac.createOscillator(); o.type = type;
@@ -208,7 +221,7 @@ function startAudio() {
   const oscM = voice('sine', 0.42);
   const sub  = voice('sine', 0.34); // the difference tone, given a body
   audio = {
-    ac, master, base, lvl: 0.05,
+    ac, master, out, base, lvl: 0.05,
     setMode(nn, mm) {
       const t = ac.currentTime, glide = 0.45;
       oscN.frequency.setTargetAtTime(base * nn, t, glide);
@@ -238,6 +251,16 @@ function audioBreath() {
 
 stage.addEventListener('pointerdown', startAudio);
 stage.addEventListener('click', startAudio);
+
+// volume — always available so the plate can be turned down (or off)
+let userVol = 0.7;
+const volRange = document.getElementById('volRange');
+volRange.addEventListener('input', () => {
+  userVol = volRange.value / 100;
+  if (audio && audio.out) audio.out.gain.setTargetAtTime(userVol, audio.ac.currentTime, 0.04);
+});
+// don't let dragging the slider scatter the sand
+volRange.addEventListener('pointermove', e => e.stopPropagation());
 
 // touch / click: a fingertip is an antinode — push grains away, let them re-find stillness
 function perturb(cx, cy) {
