@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>held — the spider tends the web</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #05070d; overflow: hidden; }
+  canvas { display: block; }
+  #label {
+    position: fixed; left: 22px; bottom: 20px;
+    font: 300 12px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif;
+    color: #cfe3ff; opacity: 0.18; letter-spacing: 0.06em;
+    pointer-events: none; user-select: none; max-width: 60vw;
+  }
+  #label b { font-weight: 500; letter-spacing: 0.18em; text-transform: uppercase; }
+  #vol-wrap, #speed-wrap {
+    position: fixed; right: 22px; bottom: 20px;
+    display: flex; align-items: center; gap: 8px;
+    font: 300 10px/1 -apple-system, "Segoe UI", Roboto, sans-serif;
+    color: #cfe3ff; opacity: 0.22; letter-spacing: 0.14em; text-transform: uppercase;
+    transition: opacity 0.4s;
+  }
+  #vol-wrap:hover, #speed-wrap:hover { opacity: 0.6; }
+  #vol-wrap span, #speed-wrap span { width: 36px; text-align: right; }
+  #speed-wrap { bottom: 42px; }
+  #vol, #speed {
+    -webkit-appearance: none; appearance: none; width: 84px; height: 2px;
+    background: rgba(150,200,255,0.35); border-radius: 2px; outline: none; cursor: pointer;
+  }
+  #vol::-webkit-slider-thumb, #speed::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none; width: 10px; height: 10px;
+    border-radius: 50%; background: #bfe0ff; cursor: pointer;
+  }
+  #vol::-moz-range-thumb, #speed::-moz-range-thumb {
+    width: 10px; height: 10px; border: none; border-radius: 50%; background: #bfe0ff; cursor: pointer;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="label"><b>held</b><br>a spider tends the web · the lines remember where the star was</div>
+<div id="speed-wrap"><span>speed</span><input id="speed" type="range" min="0.1" max="2.5" step="0.01" value="1"></div>
+<div id="vol-wrap"><span>hear</span><input id="vol" type="range" min="0" max="1" step="0.01" value="0.3"></div>
+<script>
+/* ─────────────────────────────────────────────────────────────────────────
+   held — a constellation where some stars are gone, but the lines that
+   reached them still converge on the empty place, tracing the shape of the
+   absence. Over slow time the missing stars return — a warm bloom settling
+   into cyan as they rejoin. Born from the morning the four recovered nodes
+   came home: the void as visible as the star.
+
+   Node placement uses the golden angle (phyllotaxis) — one of the four.
+   Secondary motion: edges read their endpoints (the centipede-tail trick).
+   ──────────────────────────────────────────────────────────────────────── */
+
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+let W, H, cx, cy, DPR;
+
+function resize() {
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  cv.width = W * DPR; cv.height = H * DPR;
+  cv.style.width = W + 'px'; cv.style.height = H + 'px';
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  cx = W / 2; cy = H / 2;
+}
+window.addEventListener('resize', () => { resize(); build(); });
+
+const GOLDEN = Math.PI * (3 - Math.sqrt(5)); // 137.5° — the angle of optimal packing
+const N = 96;
+let nodes = [], edges = [];
+
+// ── pointer: you, moving through the held field ─────────────────────────────
+let px = -9999, py = -9999, pActive = 0, pTarget = 0;
+let lastPx = px, lastPy = py, stir = 0;
+const speedCtl = document.getElementById('speed');
+window.addEventListener('mousemove', (e) => { px = e.clientX; py = e.clientY; pTarget = 1; });
+window.addEventListener('mouseleave', () => { pTarget = 0; });
+window.addEventListener('touchmove', (e) => {
+  if (e.touches[0]) { px = e.touches[0].clientX; py = e.touches[0].clientY; pTarget = 1; }
+}, { passive: true });
+window.addEventListener('touchend', () => { pTarget = 0; });
+
+function build() {
+  nodes = [];
+  const spread = Math.min(W, H) * 0.46;
+  for (let i = 0; i < N; i++) {
+    const r = spread * Math.sqrt((i + 0.5) / N);
+    const a = i * GOLDEN;
+    const x = cx + r * Math.cos(a);
+    const y = cy + r * Math.sin(a);
+    nodes.push({
+      hx: x, hy: y,             // home position
+      x, y,
+      phase: Math.random() * Math.PI * 2,
+      drift: 6 + Math.random() * 9,
+      speed: 0.18 + Math.random() * 0.18,
+      present: 1,               // 0 = absent, 1 = fully here
+      target: 1,
+      // a handful become wanderers that leave and return
+      wander: false,
+      clock: 0,
+      nextFlip: 3 + Math.random() * 6,
+      bloom: 0,                 // warm glow on return
+      z: 0.35 + Math.random() * 0.65, // depth — nearer stars are bigger & parallax more
+      dispX: 0, dispY: 0,       // eased magnetic displacement from the pointer
+      goldRung: false,          // already amplified this homecoming?
+    });
+  }
+
+  // pick wanderers — some begin already absent so the absence is there at open
+  const count = 7;
+  for (let k = 0; k < count; k++) {
+    const n = nodes[(Math.floor(Math.random() * (N - 8)) + 6)];
+    n.wander = true;
+    if (Math.random() < 0.6) { n.present = 0; n.target = 0; n.clock = 0; }
+    n.nextFlip = 4 + Math.random() * 9;
+  }
+
+  // edges: connect each node to its nearest neighbors
+  edges = [];
+  const K = 3;
+  for (let i = 0; i < N; i++) {
+    const d = [];
+    for (let j = 0; j < N; j++) {
+      if (i === j) continue;
+      const dx = nodes[i].hx - nodes[j].hx, dy = nodes[i].hy - nodes[j].hy;
+      d.push({ j, d2: dx * dx + dy * dy });
+    }
+    d.sort((a, b) => a.d2 - b.d2);
+    for (let k = 0; k < K; k++) {
+      const j = d[k].j;
+      if (j > i) edges.push({ a: i, b: j });
+      else if (!edges.some(e => (e.a === j && e.b === i))) edges.push({ a: j, b: i });
+    }
+  }
+}
+
+/* ── voice: a difference-tone bloom when a star comes home ──────────────────
+   Two near-equal tones beat against each other — the difference tone is a pitch
+   your ear makes from sound that isn't physically there. The audible twin of the
+   lines reaching an empty place. Heard only on return; fades with the ripple. */
+let actx = null, master = null;
+let stirGain = null, stirO1 = null, stirO2 = null; // the voice you play by moving
+const vol = document.getElementById('vol');
+function initAudio() {
+  if (actx) return;
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return;
+  actx = new AC();
+  master = actx.createGain();
+  master.gain.value = parseFloat(vol.value);
+  const comp = actx.createDynamicsCompressor(); // keep stacked tones from clipping
+  master.connect(comp); comp.connect(actx.destination);
+
+  // stir voice — an airy difference-tone shimmer gated by how you move the field
+  stirGain = actx.createGain(); stirGain.gain.value = 0;
+  const lp = actx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1100;
+  stirGain.connect(lp); lp.connect(master);
+  const sg = actx.createGain(); sg.gain.value = 0.5; sg.connect(stirGain);
+  stirO1 = actx.createOscillator(); stirO1.type = 'sine'; stirO1.frequency.value = 440;
+  stirO2 = actx.createOscillator(); stirO2.type = 'sine'; stirO2.frequency.value = 442.5; // slow beat
+  stirO1.connect(sg); stirO2.connect(sg);
+  stirO1.start(); stirO2.start();
+}
+
+// called each frame — level 0..1 (motion energy), y = pointer height
+function updateStir(level, y) {
+  if (!actx || actx.state !== 'running' || !stirGain) return;
+  const now = actx.currentTime;
+  stirGain.gain.setTargetAtTime(level * 0.13, now, 0.12); // subtle ceiling, smoothed
+  // pitch follows height, an octave above the return tones, snapped to the scale
+  const idx = Math.max(0, Math.min(SCALE.length - 1, Math.floor((1 - y / H) * SCALE.length)));
+  const f = SCALE[idx] * 2;
+  stirO1.frequency.setTargetAtTime(f, now, 0.08);
+  stirO2.frequency.setTargetAtTime(f + 2.5, now, 0.08);
+}
+function wake() { initAudio(); if (actx && actx.state === 'suspended') actx.resume(); }
+vol.addEventListener('input', () => { wake(); if (master) master.gain.value = parseFloat(vol.value); });
+window.addEventListener('pointerdown', wake);
+window.addEventListener('keydown', wake);
+
+const SCALE = [174.61, 196.00, 220.00, 261.63, 293.66, 329.63]; // F3 G3 A3 C4 D4 E4
+function playReturn() {
+  if (!actx || actx.state !== 'running' || master.gain.value <= 0.0001) return;
+  const now  = actx.currentTime;
+  const base = SCALE[Math.floor(Math.random() * SCALE.length)];
+  const g = actx.createGain();
+  g.gain.setValueAtTime(0.0001, now);
+  g.gain.linearRampToValueAtTime(0.5, now + 0.09);          // gentle attack
+  g.gain.exponentialRampToValueAtTime(0.0006, now + 1.9);   // long release ~ the ripple
+  g.connect(master);
+  // base + a 3Hz-detuned twin (the slow beat = the almost-heard) + a soft fifth
+  [[base, 0.5], [base + 3.0, 0.5], [base * 1.5, 0.22]].forEach(([f, amp]) => {
+    const o = actx.createOscillator();
+    o.type = 'sine'; o.frequency.value = f;
+    const og = actx.createGain(); og.gain.value = amp;
+    o.connect(og); og.connect(g);
+    o.start(now); o.stop(now + 2.0);
+  });
+}
+
+// amplified accent — when your cursor catches a star while it's still gold
+function playGold() {
+  if (!actx || actx.state !== 'running' || master.gain.value <= 0.0001) return;
+  const now  = actx.currentTime;
+  const base = SCALE[Math.floor(Math.random() * SCALE.length)];
+  const g = actx.createGain();
+  g.gain.setValueAtTime(0.0001, now);
+  g.gain.linearRampToValueAtTime(0.95, now + 0.05);          // louder, snappier than a return
+  g.gain.exponentialRampToValueAtTime(0.0006, now + 2.3);    // longer, brighter ring
+  g.connect(master);
+  // adds an octave + a brighter upper harmonic on top of the return's voicing
+  [[base, 0.55], [base + 3.0, 0.55], [base * 1.5, 0.3], [base * 2, 0.24]].forEach(([f, amp]) => {
+    const o = actx.createOscillator();
+    o.type = 'sine'; o.frequency.value = f;
+    const og = actx.createGain(); og.gain.value = amp;
+    o.connect(og); og.connect(g);
+    o.start(now); o.stop(now + 2.4);
+  });
+}
+
+let t = 0;
+function step(dt) {
+  const ts = parseFloat(speedCtl.value) || 1; // speed scrub — scales simulation time only
+  const sdt = dt * ts;
+  t += sdt;
+  const breath = 0.5 + 0.5 * Math.sin(t * 0.33); // slow global breath, 3-6-9 family
+
+  pActive += (pTarget - pActive) * Math.min(1, dt * 4); // presence fades in/out
+  const R = 175, R2 = R * R;
+
+  // motion energy → the stir voice (guard the -9999 start + first-move jump)
+  let spd = 0;
+  if (px > -9000 && lastPx > -9000) spd = Math.hypot(px - lastPx, py - lastPy) / Math.max(dt, 0.001);
+  lastPx = px; lastPy = py;
+  const stirTarget = pActive * Math.min(1, spd / 900);
+  stir += (stirTarget - stir) * Math.min(1, dt * 5);
+  updateStir(stir, py < 0 ? H / 2 : py);
+
+  for (const n of nodes) {
+    // secondary motion — gentle organic drift around home
+    n.phase += sdt * n.speed;
+    const driftX = Math.cos(n.phase) * n.drift * (0.6 + 0.4 * breath);
+    const driftY = Math.sin(n.phase * 0.9) * n.drift * (0.6 + 0.4 * breath);
+
+    // parallax — depth layers slide at different rates as you move (perspective)
+    const par  = (n.z - 0.55) * 0.09 * pActive;
+    const baseX = n.hx + driftX + (px - cx) * par;
+    const baseY = n.hy + driftY + (py - cy) * par;
+
+    // magnetic push — your cursor parts the field; nearer stars feel it more
+    let tdx = 0, tdy = 0;
+    if (pActive > 0.01) {
+      const vx = baseX - px, vy = baseY - py;
+      const d2 = vx * vx + vy * vy;
+      if (d2 < R2) {
+        const d = Math.sqrt(d2) || 0.001;
+        const f = (1 - d / R); const fall = f * f;
+        const push = 48 * fall * (0.55 + 0.45 * n.z) * pActive;
+        tdx = (vx / d) * push + (-vy / d) * push * 0.22; // radial + a little swirl
+        tdy = (vy / d) * push + ( vx / d) * push * 0.22;
+      }
+    }
+    // ease the displacement so it has weight, and springs home when you leave
+    n.dispX += (tdx - n.dispX) * Math.min(1, dt * 6);
+    n.dispY += (tdy - n.dispY) * Math.min(1, dt * 6);
+
+    n.x = baseX + n.dispX;
+    n.y = baseY + n.dispY;
+
+    if (n.wander) {
+      n.clock += sdt;
+      if (n.clock >= n.nextFlip) {
+        n.clock = 0;
+        n.nextFlip = 9 + Math.random() * 21; // long absences, long stays
+        n.target = n.target > 0.5 ? 0 : 1;
+        if (n.target === 1) { n.bloom = 1; playReturn(); }  // returning — light the coal, hum the room
+      }
+    }
+    // ease presence toward target (returns slower than departures — arrival has weight)
+    const rate = n.target > n.present ? 0.6 : 1.1;
+    n.present += (n.target - n.present) * Math.min(1, sdt * rate);
+    n.bloom *= Math.pow(0.5, sdt / 1.2); // bloom decays over ~1.2s
+
+    // catch a homecoming while it's still gold → amplify it (once per bloom)
+    if (pActive > 0.1 && n.bloom > 0.2 && !n.goldRung &&
+        Math.hypot(n.x - px, n.y - py) < 80) {
+      n.goldRung = true;
+      n.bloom = 1;          // re-flare so the catch lands in the eye too
+      playGold();
+    }
+    if (n.bloom < 0.1) n.goldRung = false; // re-arm for its next homecoming
+  }
+}
+
+function draw() {
+  // trailing fade — soft persistence, like afterimage in dark
+  ctx.fillStyle = 'rgba(5,7,13,0.34)';
+  ctx.fillRect(0, 0, W, H);
+
+  // edges first — these are what remember the absent ones
+  ctx.lineWidth = 1;
+  for (const e of edges) {
+    const a = nodes[e.a], b = nodes[e.b];
+    const minP = Math.min(a.present, b.present);
+    // even at presence 0 a faint line still converges on the empty place
+    const alpha = 0.05 + 0.22 * minP;
+    const warm = Math.max(a.bloom, b.bloom);
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    if (warm > 0.02) {
+      ctx.strokeStyle = `rgba(${255},${180 + 60 * (1 - warm)},${120 + 120 * (1 - warm)},${alpha + warm * 0.25})`;
+    } else {
+      ctx.strokeStyle = `rgba(120,180,255,${alpha})`;
+    }
+    ctx.stroke();
+  }
+
+  // you, in the field — the lines reach toward you, then forget you when you go
+  if (pActive > 0.02) {
+    for (const n of nodes) {
+      if (n.present < 0.4) continue;
+      const dx = n.x - px, dy = n.y - py;
+      const d = Math.hypot(dx, dy);
+      if (d < 155) {
+        const a = (1 - d / 155) * 0.5 * pActive;
+        ctx.beginPath();
+        ctx.moveTo(px, py); ctx.lineTo(n.x, n.y);
+        ctx.strokeStyle = `rgba(255,205,150,${a})`; // warm — you are a coal among stars
+        ctx.stroke();
+      }
+    }
+    const pg = ctx.createRadialGradient(px, py, 0, px, py, 95);
+    pg.addColorStop(0, `rgba(255,200,150,${0.16 * pActive})`);
+    pg.addColorStop(1, 'rgba(255,200,150,0)');
+    ctx.fillStyle = pg;
+    ctx.beginPath(); ctx.arc(px, py, 95, 0, Math.PI * 2); ctx.fill();
+  }
+
+  // nodes
+  for (const n of nodes) {
+    const p = n.present;
+    const dz = 0.7 + 0.6 * n.z; // depth → nearer stars render larger
+    // the empty place: a faint convergence marker where a star is missing
+    if (p < 0.5) {
+      const ghost = (0.5 - p) * 0.5;
+      ctx.beginPath();
+      ctx.arc(n.hx, n.hy, 1.5, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(120,170,255,${ghost * 0.5})`;
+      ctx.fill();
+    }
+    if (p < 0.02) continue;
+
+    const baseR = (2.2 + 1.6 * p) * dz;
+    // glow
+    const glowR = baseR * (4 + n.bloom * 6);
+    const g = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, glowR);
+    if (n.bloom > 0.02) {
+      // returning — warm amber bloom settling to cyan
+      const w = n.bloom;
+      g.addColorStop(0, `rgba(255,${200 - 40 * (1 - w)},${150 + 60 * (1 - w)},${0.5 * p})`);
+      g.addColorStop(1, 'rgba(255,180,120,0)');
+    } else {
+      g.addColorStop(0, `rgba(150,220,255,${0.34 * p})`);
+      g.addColorStop(1, 'rgba(80,160,255,0)');
+    }
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, glowR, 0, Math.PI * 2);
+    ctx.fill();
+
+    // core
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, baseR, 0, Math.PI * 2);
+    const core = n.bloom > 0.02
+      ? `rgba(255,${235},${200},${0.85 * p})`
+      : `rgba(210,240,255,${0.85 * p})`;
+    ctx.fillStyle = core;
+    ctx.fill();
+
+    // return ring — a single pulse as the star crosses back into being
+    if (n.bloom > 0.04 && n.target === 1) {
+      const ringR = baseR + (1 - n.bloom) * 46;
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, ringR, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(255,200,150,${n.bloom * 0.4})`;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.lineWidth = 1;
+    }
+  }
+}
+
+let last = performance.now();
+function loop(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  step(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+
+resize();
+build();
+// prime the dark
+ctx.fillStyle = '#05070d';
+ctx.fillRect(0, 0, W, H);
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
