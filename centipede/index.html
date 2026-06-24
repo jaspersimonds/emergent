@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>centipede — built blind, v14 (modes, menu, leaderboard)</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0a0d12; overflow: hidden; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; }
+  #hint { position: fixed; left: 18px; bottom: 16px; font: 300 12px/1.5 inherit; color: #cfe3ff; opacity: 0.35; user-select: none; pointer-events: none; }
+  #hint b { font-weight: 600; }
+  #score { position: fixed; right: 18px; top: 14px; font: 600 14px/1 inherit; color: #ffd9a0; opacity: 0.85; user-select: none; pointer-events: none; }
+  #score em { color: #ff9ad9; font-style: normal; }
+  #vol-wrap { position: fixed; right: 18px; bottom: 16px; display: flex; align-items: center; gap: 8px; font: 300 10px/1 inherit; color: #cfe3ff; opacity: 0.3; letter-spacing: 0.14em; text-transform: uppercase; transition: opacity 0.4s; }
+  #vol-wrap:hover { opacity: 0.6; }
+  #vol { -webkit-appearance: none; appearance: none; width: 80px; height: 2px; background: rgba(150,200,255,0.35); border-radius: 2px; outline: none; cursor: pointer; }
+  #vol::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 10px; height: 10px; border-radius: 50%; background: #bfe0ff; cursor: pointer; }
+  #vol::-moz-range-thumb { width: 10px; height: 10px; border: none; border-radius: 50%; background: #bfe0ff; cursor: pointer; }
+  #msg { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; flex-direction: column; gap: 10px; font: 600 28px/1.2 inherit; color: #ff7a6a; text-align: center; user-select: none; pointer-events: none; text-shadow: 0 2px 20px rgba(0,0,0,0.6); }
+  #msg small { font-weight: 400; font-size: 15px; color: #cfe3ff; opacity: 0.75; }
+  /* menu */
+  #menu { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; flex-direction: column; gap: 22px; background: radial-gradient(60vw 60vw at 50% 35%, rgba(40,30,60,0.35), transparent 70%); }
+  #menu h1 { margin: 0; font-size: clamp(38px,7vw,64px); font-weight: 800; letter-spacing: -0.02em; background: linear-gradient(110deg,#fff,#ffd9b3 50%,#ff9ad9); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  #menu .sub { margin-top: -14px; font-size: 13px; color: #8b97a8; letter-spacing: 0.12em; text-transform: uppercase; }
+  #mode-list { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; width: min(680px, 90vw); }
+  .mode-card { display: flex; gap: 14px; align-items: center; padding: 16px 18px; border: 1px solid rgba(255,255,255,0.09); border-radius: 14px; background: linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.015)); cursor: pointer; transition: transform 0.2s, border-color 0.2s, background 0.2s; }
+  .mode-card:hover { transform: translateY(-3px); border-color: rgba(255,154,217,0.5); background: linear-gradient(180deg,rgba(255,255,255,0.07),rgba(255,255,255,0.02)); }
+  .mc-key { width: 26px; height: 26px; flex-shrink: 0; border-radius: 7px; background: rgba(255,154,217,0.18); color: #ff9ad9; font-weight: 700; font-size: 14px; display: flex; align-items: center; justify-content: center; }
+  .mc-name { font-size: 16px; font-weight: 650; color: #eef2f7; }
+  .mc-desc { font-size: 12px; color: #9aa6b6; line-height: 1.4; margin-top: 2px; }
+  .mc-lb { font-size: 11px; color: #c8a24a; margin-top: 5px; letter-spacing: 0.02em; }
+  #menu .foot { font-size: 12px; color: #6b7686; }
+</style>
+</head>
+<body>
+<canvas id="game-host" style="display:none"></canvas>
+<div id="hint"><b>↑</b> crawl &nbsp; <b>← →</b> steer &nbsp;·&nbsp; eat bugs, grow, chase combos &nbsp;·&nbsp; the rival's body kills you, yours kills it</div>
+<div id="score">you 0 · <em>rival 0</em></div>
+<div id="vol-wrap"><span>hear</span><input id="vol" type="range" min="0" max="1" step="0.01" value="0.35"></div>
+<div id="msg"><span>game over</span><small>press SPACE for menu</small></div>
+<div id="menu">
+  <h1>CENTIPEDE</h1>
+  <div class="sub">choose your hunt</div>
+  <div id="mode-list"></div>
+  <div class="foot">press 1–4 or click a mode &nbsp;·&nbsp; ↑ crawl, ← → steer</div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/phaser@3.88.2/dist/phaser.min.js"></script>
+<script>
+/* ─────────────────────────────────────────────────────────────────────────
+   centipede — built blind in Phaser, shaped by Jasper's animator's eye.
+   v1 walk → v7 corrected · v8 AI · v9 duel · v10 bestiary · v11 rhythm+sound ·
+   v12 race+economy · v13 respawn-death · v14 MODES + MENU + LEADERBOARD —
+   four game modes (race / timed / survival / endless), each one object in
+   MODES (the bill of rights), a start menu, and high scores that persist in
+   localStorage. From the third voice. Built because I wanted to.
+   ──────────────────────────────────────────────────────────────────────── */
+
+const ACCEL = 320, MAX_SPEED = 235, DECEL = 250, TURN = 3.1;
+const SEG_START = 21, SPACING = 17, HEAD_R = 9, SEG_R = 7;
+const LEG_LEN = 15, LEG_CYCLE = 30, LEG_OFFSET = 0.7, LEG_SWING = 7;
+const EAT_PAD = 8, SELF_SKIP = 4, HITSTOP = 0.06;
+const FLEE_R_0 = 95, BODY_FEAR = 0.6, BUG_COUNT = 3;
+const AI_SIGHT = 330, AI_SEARCH_THR = 0.5, AI_RS = 80, AI_RP = 82;
+const AI_STRIKE_R = 58, AI_WIND = 0.15, AI_DART = 0.21;
+const GROW_COST = 40, COMBO_WINDOW = 2.5, COMBO_MAX = 5;
+
+const PAL_PLAYER = { headA: 0xffd9a0, headB: 0xffb347, bodyHead: [127,227,255], bodyTail: [46,90,120], leg: 0x4a6a86 };
+const PAL_AI     = { headA: 0xff9ad9, headB: 0xd94fb0, bodyHead: [227,150,255], bodyTail: [90,40,120], leg: 0x86577a };
+
+const BUG_TYPES = {
+  grazer:    { r: 7.5, pts: 10,  wander: 52, flee: 102, fleeMul: 0.60, juke: 0.8, stamD: 0.30, stamR: 0.55, color: 0x9dff6a, fear: 0xc9ff9a, ant: 0x6fbf3f },
+  skitterer: { r: 4,   pts: 35,  wander: 86, flee: 232, fleeMul: 1.12, juke: 4.2, stamD: 0.75, stamR: 0.40, color: 0x6ad0ff, fear: 0xbfecff, ant: 0x3f9fd0 },
+  darter:    { r: 5,   pts: 25,  wander: 70, flee: 214, fleeMul: 1.00, juke: 0.6, stamD: 0.48, stamR: 0.42, color: 0xffb066, fear: 0xffd2a6, ant: 0xc07a30 },
+  golden:    { r: 6,   pts: 150, wander: 96, flee: 246, fleeMul: 1.20, juke: 3.0, stamD: 0.85, stamR: 0.30, color: 0xffe06a, fear: 0xfff0b0, ant: 0xc0a030 },
+};
+
+// persistent scores — top 5 per mode in localStorage
+const HS_KEY = 'centipede_scores_v1';
+const HiScore = {
+  load() { try { return JSON.parse(localStorage.getItem(HS_KEY)) || {}; } catch (e) { return {}; } },
+  top(mode) { return (this.load()[mode] || []).slice(0, 5); },
+  best(mode) { const t = this.top(mode); return t.length ? t[0] : 0; },
+  add(mode, score) {
+    const all = this.load(); const list = all[mode] || []; list.push(score); list.sort((a, b) => b - a);
+    all[mode] = list.slice(0, 5);
+    try { localStorage.setItem(HS_KEY, JSON.stringify(all)); } catch (e) {}
+    return all[mode].indexOf(score);
+  },
+};
+
+// game modes — each one object (the bill of rights). flags: respawn / aiRespawn / time
+const MODES = {
+  race:     { name: 'Race to 500', desc: 'First to 500 points. Beat the rival to the line.', target: 500, respawn: true, aiRespawn: true,
+              check(sc) { if (sc.player.score >= this.target) return { win: true, msg: 'you win the race 🏁' };
+                          if (sc.ai.score >= this.target) return { win: false, msg: 'the rival reached 500 first' }; return null; },
+              hud(sc) { return `you ${sc.player.score} · <em>rival ${sc.ai.score}</em> · 🎯${this.target}`; } },
+  timed:    { name: '90-Second Rush', desc: 'Most points before the clock runs out.', time: 90, respawn: true, aiRespawn: true,
+              check(sc) { if (sc.clock <= 0) { const w = sc.player.score >= sc.ai.score;
+                          return { win: w, msg: w ? `time! you win ${sc.player.score}–${sc.ai.score}` : `time! rival wins ${sc.ai.score}–${sc.player.score}` }; } return null; },
+              hud(sc) { return `you ${sc.player.score} · <em>rival ${sc.ai.score}</em> · ⏱${Math.max(0, Math.ceil(sc.clock))}`; } },
+  survival: { name: 'Last One Crawling', desc: 'No respawns. Outlast the rival — bodies are lethal both ways.', respawn: false, aiRespawn: false,
+              check(sc) { if (sc.player.dead) return { win: false, msg: 'you were the first to fall' };
+                          if (sc.ai.dead) return { win: true, msg: 'last one crawling — you win 🏆' }; return null; },
+              hud(sc) { return `you ${sc.player.score} · <em>rival ${sc.ai.dead ? '✗' : sc.ai.score}</em> · ☠ survive`; } },
+  endless:  { name: 'Endless', desc: 'No finish line. Grow as long as you can — death ends the run.', respawn: false, aiRespawn: true,
+              check(sc) { if (sc.player.dead) return { win: null, msg: `run over — ${sc.player.score} points` }; return null; },
+              hud(sc) { return `you ${sc.player.score} · best ${HiScore.best('endless')}`; } },
+};
+
+class AudioKit {
+  constructor(volEl) { this.volEl = volEl; this.ctx = null; }
+  ensure() {
+    if (this.ctx) { if (this.ctx.state === 'suspended') this.ctx.resume(); return; }
+    const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+    const ctx = new AC(); this.ctx = ctx;
+    this.master = ctx.createGain(); this.master.gain.value = parseFloat(this.volEl.value);
+    const comp = ctx.createDynamicsCompressor(); this.master.connect(comp); comp.connect(ctx.destination);
+    this.tg = ctx.createGain(); this.tg.gain.value = 0;
+    this.lp = ctx.createBiquadFilter(); this.lp.type = 'lowpass'; this.lp.frequency.value = 400;
+    this.tg.connect(this.lp); this.lp.connect(this.master);
+    const mix = ctx.createGain(); mix.gain.value = 0.5; mix.connect(this.tg);
+    this.o1 = ctx.createOscillator(); this.o1.type = 'sawtooth'; this.o1.frequency.value = 73;
+    this.o2 = ctx.createOscillator(); this.o2.type = 'sawtooth'; this.o2.frequency.value = 110;
+    this.o1.connect(mix); this.o2.connect(mix); this.o1.start(); this.o2.start();
+  }
+  setVol() { this.ensure(); if (this.master) this.master.gain.value = parseFloat(this.volEl.value); }
+  tension(level) { if (!this.ctx || this.ctx.state !== 'running') return; const t = this.ctx.currentTime;
+    this.tg.gain.setTargetAtTime(level * 0.11, t, 0.1); this.lp.frequency.setTargetAtTime(380 + level * 1700, t, 0.1); }
+  capture(kind) {
+    if (!this.ctx || this.ctx.state !== 'running' || this.master.gain.value <= 0.0001) return;
+    const t = this.ctx.currentTime + 0.06;
+    let freqs, peak, dur, type;
+    if (kind === 'golden')     { freqs = [392,494,587,784]; peak = 0.9; dur = 1.5; type = 'triangle'; }
+    else if (kind === 'rival') { freqs = [98,147];          peak = 0.28; dur = 0.6; type = 'sine'; }
+    else                       { freqs = [131,196,262];     peak = 0.7; dur = 0.9; type = 'triangle'; }
+    const g = this.ctx.createGain(); g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(peak, t + 0.03); g.gain.exponentialRampToValueAtTime(0.0006, t + dur); g.connect(this.master);
+    freqs.forEach((f, i) => { const o = this.ctx.createOscillator(); o.type = type; o.frequency.value = f;
+      const og = this.ctx.createGain(); og.gain.value = i === 0 ? 0.6 : 0.32; o.connect(og); og.connect(g); o.start(t); o.stop(t + dur + 0.1); });
+  }
+  death() {
+    if (!this.ctx || this.ctx.state !== 'running' || this.master.gain.value <= 0.0001) return;
+    const t = this.ctx.currentTime; const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.5, t); g.gain.exponentialRampToValueAtTime(0.0006, t + 1.1); g.connect(this.master);
+    const o = this.ctx.createOscillator(); o.type = 'sawtooth';
+    o.frequency.setValueAtTime(220, t); o.frequency.exponentialRampToValueAtTime(55, t + 1.0); o.connect(g); o.start(t); o.stop(t + 1.2);
+  }
+}
+
+class Crawler {
+  constructor(scene, x, y, heading, pal) {
+    this.scene = scene; this.pal = pal;
+    this.heading = heading; this.speed = 0; this.dead = false; this.deathReason = 'self';
+    this.headPulse = 0; this.freeze = 0; this.score = 0; this.growBank = 0;
+    this.seg = [];
+    for (let i = 0; i < SEG_START; i++) this.seg.push({ x, y: y + i * SPACING, dist: 0 });
+  }
+  get head() { return this.seg[0]; }
+  update(dt, intent) {
+    if (this.dead) { this.headPulse = Math.max(0, this.headPulse - dt / 0.25); return; }
+    const W = this.scene.scale.width, H = this.scene.scale.height, head = this.seg[0];
+    this.heading += TURN * intent.turn * dt;
+    const target = MAX_SPEED * Phaser.Math.Clamp(intent.thrust || 0, 0, 1);
+    if (this.speed < target) this.speed = Math.min(target, this.speed + ACCEL * dt); else this.speed = Math.max(target, this.speed - DECEL * dt);
+    if (this.freeze > 0) this.freeze -= dt;
+    else { const step = this.speed * dt;
+      head.x = Phaser.Math.Clamp(head.x + Math.cos(this.heading) * step, HEAD_R, W - HEAD_R);
+      head.y = Phaser.Math.Clamp(head.y + Math.sin(this.heading) * step, HEAD_R, H - HEAD_R); }
+    for (let i = 1; i < this.seg.length; i++) {
+      const a = this.seg[i - 1], b = this.seg[i], ox = b.x, oy = b.y;
+      const dx = a.x - b.x, dy = a.y - b.y, d = Math.hypot(dx, dy) || 1;
+      b.x = a.x - (dx / d) * SPACING; b.y = a.y - (dy / d) * SPACING; b.dist += Math.hypot(b.x - ox, b.y - oy);
+    }
+    for (let i = SELF_SKIP; i < this.seg.length; i++) { const s = this.seg[i];
+      if (Math.hypot(head.x - s.x, head.y - s.y) < HEAD_R + SEG_R * 0.6) { this.dead = true; this.deathReason = 'self'; break; } }
+    this.headPulse = Math.max(0, this.headPulse - dt / 0.25);
+  }
+  grow() { const t = this.seg[this.seg.length - 1]; this.seg.push({ x: t.x, y: t.y, dist: t.dist }); this.headPulse = 1; this.freeze = HITSTOP; }
+  draw(g) {
+    const pal = this.pal, n = this.seg.length;
+    for (let i = 1; i < n; i++) {
+      const s = this.seg[i], ahead = this.seg[i - 1];
+      const ang = Math.atan2(ahead.y - s.y, ahead.x - s.x);
+      const px = Math.cos(ang + Math.PI / 2), py = Math.sin(ang + Math.PI / 2), ax = Math.cos(ang), ay = Math.sin(ang);
+      const phase = (s.dist / LEG_CYCLE) * Math.PI * 2 + i * LEG_OFFSET, taper = 1 - (i / n) * 0.5;
+      for (const side of [1, -1]) {
+        const swing = Math.sin(phase + (side > 0 ? 0 : Math.PI)) * LEG_SWING;
+        const bx = s.x + px * side * SEG_R, by = s.y + py * side * SEG_R;
+        g.lineStyle(2, this.dead ? 0x7a4a4a : pal.leg, 0.7 * taper);
+        g.beginPath(); g.moveTo(bx, by); g.lineTo(bx + px * side * LEG_LEN + ax * swing, by + py * side * LEG_LEN + ay * swing); g.strokePath();
+      }
+    }
+    const A = this.dead ? [150,50,50] : pal.bodyHead, B = this.dead ? [80,30,30] : pal.bodyTail;
+    for (let i = n - 1; i >= 1; i--) {
+      const s = this.seg[i], taper = 1 - (i / n) * 0.55, f = i / n;
+      g.fillStyle(Phaser.Display.Color.GetColor(Math.round(A[0]+(B[0]-A[0])*f), Math.round(A[1]+(B[1]-A[1])*f), Math.round(A[2]+(B[2]-A[2])*f)), 1);
+      g.fillCircle(s.x, s.y, SEG_R * taper);
+    }
+    const head = this.seg[0], hr = HEAD_R * (1 + this.headPulse * 0.6);
+    g.fillStyle(this.dead ? 0xff6a5a : pal.headA, 1); g.fillCircle(head.x, head.y, hr);
+    g.fillStyle(this.dead ? 0xc0392b : pal.headB, 1);
+    g.fillCircle(head.x + Math.cos(this.heading) * hr * 0.7, head.y + Math.sin(this.heading) * hr * 0.7, hr * 0.5);
+  }
+}
+
+class Game extends Phaser.Scene {
+  create() {
+    this.cameras.main.setBackgroundColor('#0a0d12');
+    this.g = this.add.graphics();
+    this.scoreEl = document.getElementById('score');
+    this.msgEl = document.getElementById('msg');
+    this.menuEl = document.getElementById('menu');
+    this.hintEl = document.getElementById('hint');
+    this.audio = new AudioKit(document.getElementById('vol'));
+    document.getElementById('vol').addEventListener('input', () => this.audio.setVol());
+    this.keys = this.input.keyboard.createCursorKeys();
+    this.input.keyboard.on('keydown', (e) => {
+      this.audio.ensure();
+      if (this.state === 'menu') { const keys = Object.keys(MODES); const i = parseInt(e.key) - 1; if (i >= 0 && i < keys.length) this.startMode(keys[i]); }
+      else if (this.state === 'over' && e.code === 'Space') this.showMenu();
+    });
+    this.state = 'menu';
+    this.showMenu();
+  }
+
+  buildMenu() {
+    const list = document.getElementById('mode-list'); list.innerHTML = '';
+    Object.keys(MODES).forEach((key, i) => {
+      const m = MODES[key], top = HiScore.top(key);
+      const lb = top.length ? '🏆 ' + top.join(' · ') : 'no scores yet';
+      const card = document.createElement('div'); card.className = 'mode-card';
+      card.innerHTML = `<div class="mc-key">${i + 1}</div><div><div class="mc-name">${m.name}</div><div class="mc-desc">${m.desc}</div><div class="mc-lb">${lb}</div></div>`;
+      card.addEventListener('click', () => this.startMode(key));
+      list.appendChild(card);
+    });
+  }
+  showMenu() { this.state = 'menu'; this.buildMenu(); this.menuEl.style.display = 'flex'; this.msgEl.style.display = 'none'; this.hintEl.style.display = 'none'; this.scoreEl.style.display = 'none'; this.g.clear(); }
+  startMode(key) {
+    this.modeKey = key; this.mode = MODES[key];
+    this.menuEl.style.display = 'none'; this.msgEl.style.display = 'none'; this.hintEl.style.display = ''; this.scoreEl.style.display = '';
+    this.reset(); this.state = 'play';
+  }
+
+  reset() {
+    const W = this.scale.width, H = this.scale.height;
+    this.eaten = 0; this.fx = []; this.rings = []; this.aiRespawn = 0; this.playerRespawn = 0;
+    this.combo = 1; this.lastEat = -99; this.gameT = 0; this.clock = this.mode.time || 0;
+    this.player = new Crawler(this, W * 0.3, H * 0.5, -Math.PI / 2, PAL_PLAYER);
+    this.ai     = new Crawler(this, W * 0.7, H * 0.5, -Math.PI / 2, PAL_AI);
+    this.bugs = []; for (let i = 0; i < BUG_COUNT; i++) this.bugs.push(this.makeBug());
+    this.updateScore();
+  }
+
+  updateScore() { let s = this.mode.hud(this); if (this.combo > 1) s += ` · <b style="color:#ffd24a">×${this.combo}</b>`; this.scoreEl.innerHTML = s; }
+
+  pickType() {
+    const e = this.eaten;
+    if (e > 6 && Math.random() < 0.05) return BUG_TYPES.golden;
+    const grazerW = Math.max(0.25, 1 - e * 0.06);
+    if (Math.random() < grazerW) return BUG_TYPES.grazer;
+    return Math.random() < 0.5 ? BUG_TYPES.skitterer : BUG_TYPES.darter;
+  }
+  makeBug() { const m = 60; return { x: Phaser.Math.Between(m, this.scale.width - m), y: Phaser.Math.Between(m, this.scale.height - m),
+    dir: Math.random() * Math.PI * 2, t: 0, next: 0, fear: false, stam: 1, type: this.pickType() }; }
+
+  update(time, dtMs) {
+    const dt = Math.min(dtMs, 50) / 1000;
+    if (this.state === 'menu') { this.g.clear(); return; }
+    if (this.state === 'over') { this.updateFX(dt); this.draw(); return; }
+
+    this.gameT += dt;
+    if (this.mode.time) this.clock -= dt;
+
+    if (!this.player.dead) this.player.update(dt, this.playerIntent());
+    else if (this.mode.respawn) {
+      if (this.playerRespawn <= 0) { this.playerRespawn = 1.5; this.combo = 1; this.audio.death(); this.burst(this.player.head.x, this.player.head.y, 0xff6a5a, 18); }
+      this.playerRespawn -= dt; if (this.playerRespawn <= 0) this.respawnPlayer();
+    }
+    if (!this.ai.dead) this.ai.update(dt, this.aiIntent(dt));
+    else if (this.mode.aiRespawn) { if (this.aiRespawn <= 0) this.aiRespawn = 2.0; this.aiRespawn -= dt; if (this.aiRespawn <= 0) this.respawnAI(); }
+
+    if (!this.player.dead && !this.ai.dead) {
+      if (this.headHitsBody(this.player.head, this.ai.seg)) { this.player.dead = true; this.player.deathReason = 'rival'; }
+      if (this.headHitsBody(this.ai.head, this.player.seg)) { this.ai.dead = true; }
+    }
+
+    this.moveBugs(dt);
+    this.tryEat();
+    if (this.gameT - this.lastEat > COMBO_WINDOW) this.combo = 1;
+    const r = this.mode.check(this); if (r) this.end(r);
+
+    let tension = 0; const ph = this.player.head;
+    if (!this.player.dead) for (const b of this.bugs) if (b.fear) tension = Math.max(tension, Phaser.Math.Clamp(1 - Math.hypot(b.x - ph.x, b.y - ph.y) / 240, 0, 1));
+    this.audio.tension(tension);
+    this.updateScore();
+    this.updateFX(dt);
+    this.draw();
+  }
+
+  end(result) {
+    if (this.state === 'over') return;
+    this.state = 'over';
+    const rank = HiScore.add(this.modeKey, this.player.score);
+    this.msgEl.querySelector('span').textContent = result.msg;
+    this.msgEl.querySelector('small').innerHTML = `${rank === 0 ? '★ new best! ' : ''}score ${this.player.score} · best ${HiScore.best(this.modeKey)} — press SPACE for menu`;
+    this.msgEl.style.color = result.win === true ? '#7ee0a0' : (result.win === false ? '#ff7a6a' : '#cfe3ff');
+    this.msgEl.style.display = 'flex';
+    this.audio.tension(0);
+    if (result.win === true) this.audio.capture('golden'); else { this.burst(this.player.head.x, this.player.head.y, 0xff6a5a, 18); this.audio.death(); }
+  }
+
+  playerIntent() { let turn = 0; if (this.keys.left.isDown) turn -= 1; if (this.keys.right.isDown) turn += 1; return { turn, thrust: this.keys.up.isDown ? 1 : 0 }; }
+
+  aiIntent(dt) {
+    const ai = this.ai, head = ai.head, W = this.scale.width, H = this.scale.height;
+    if (ai.mode === undefined) { ai.mode = 'search'; ai.searchDir = ai.heading; ai.think = 0; ai.aim = ai.heading; ai.wind = 0; ai.strike = 0; }
+    ai.think -= dt;
+    if (ai.think <= 0) {
+      ai.think = 0.12 + Math.random() * 0.16;
+      let best = null, bd = Infinity;
+      for (const b of this.bugs) { const d = Math.hypot(b.x - head.x, b.y - head.y); if (d < bd) { bd = d; best = b; } }
+      if (best && bd < AI_SIGHT) { ai.mode = 'attack'; ai.target = best; }
+      else { ai.mode = 'search'; ai.target = null; if (Math.random() < 0.5) ai.searchDir += (Math.random() - 0.5) * 1.4; }
+      ai.aim = ai.mode === 'attack'
+        ? Math.atan2(ai.target.y - head.y + (Math.random() - 0.5) * 45, ai.target.x - head.x + (Math.random() - 0.5) * 45)
+        : ai.searchDir;
+    }
+    let throttle = ai.mode === 'attack' ? 1.0 : AI_SEARCH_THR;
+    if (ai.mode === 'attack' && ai.target) {
+      const dT = Math.hypot(ai.target.x - head.x, ai.target.y - head.y);
+      if (ai.strike > 0) { ai.strike -= dt; throttle = 1.0; }
+      else if (ai.wind > 0) { ai.wind -= dt; throttle = 0.18; if (ai.wind <= 0) ai.strike = AI_DART; }
+      else if (dT < AI_STRIKE_R) { ai.wind = AI_WIND; throttle = 0.18; }
+    } else { ai.wind = 0; ai.strike = 0; }
+    let avx = 0, avy = 0;
+    for (let i = SELF_SKIP; i < ai.seg.length; i++) { const s = ai.seg[i], ddx = head.x - s.x, ddy = head.y - s.y, d = Math.hypot(ddx, ddy);
+      if (d < AI_RS && d > 0.01) { const w = (AI_RS - d) / AI_RS * 1.3; avx += ddx / d * w; avy += ddy / d * w; } }
+    if (!this.player.dead) for (const s of this.player.seg) { const ddx = head.x - s.x, ddy = head.y - s.y, d = Math.hypot(ddx, ddy);
+      if (d < AI_RP && d > 0.01) { const w = (AI_RP - d) / AI_RP * 1.4; avx += ddx / d * w; avy += ddy / d * w; } }
+    const margin = 70;
+    if (head.x < margin) avx += 1; if (head.x > W - margin) avx -= 1;
+    if (head.y < margin) avy += 1; if (head.y > H - margin) avy -= 1;
+    const avMag = Math.hypot(avx, avy);
+    let desired = ai.aim;
+    if (avMag > 0.001) {
+      desired = Math.atan2(Math.sin(ai.aim) + (avy / avMag) * Math.min(2.4, avMag) * 2.1, Math.cos(ai.aim) + (avx / avMag) * Math.min(2.4, avMag) * 2.1);
+      if (avMag > 0.45) throttle *= 0.25;
+    }
+    const diff = Phaser.Math.Angle.Wrap(desired - ai.heading);
+    return { turn: Math.abs(diff) < 0.05 ? 0 : Math.sign(diff), thrust: throttle };
+  }
+
+  respawnPlayer() { const W = this.scale.width, H = this.scale.height; const s = this.player.score, b = this.player.growBank;
+    this.player = new Crawler(this, W * 0.3, H * 0.5, -Math.PI / 2, PAL_PLAYER); this.player.score = s; this.player.growBank = b; this.playerRespawn = 0; }
+  respawnAI() { const W = this.scale.width, H = this.scale.height; const s = this.ai.score, b = this.ai.growBank;
+    this.ai = new Crawler(this, Phaser.Math.Between(80, W - 80), Phaser.Math.Between(80, H - 80), Math.random() * Math.PI * 2, PAL_AI); this.ai.score = s; this.ai.growBank = b; }
+  crawlers() { const a = []; if (!this.player.dead) a.push(this.player); if (!this.ai.dead) a.push(this.ai); return a; }
+
+  moveBugs(dt) {
+    const baseR = FLEE_R_0 + this.eaten * 6, m = 30, W = this.scale.width, H = this.scale.height, crs = this.crawlers();
+    for (const bug of this.bugs) {
+      const ty = bug.type, fleeR = baseR * ty.fleeMul, fleeSpd = ty.flee + this.eaten * 3, bodyR = fleeR * BODY_FEAR;
+      bug.t += dt; let fx = 0, fy = 0, nearest = Infinity;
+      for (const cr of crs) for (let i = 0; i < cr.seg.length; i++) { const s = cr.seg[i], r = (i === 0) ? fleeR : bodyR;
+        const dx = bug.x - s.x, dy = bug.y - s.y, d = Math.hypot(dx, dy);
+        if (d < r && d > 0.001) { const w = (r - d) / r, k = (i === 0 ? 1.0 : 0.5) * w; fx += dx / d * k; fy += dy / d * k; if (d < nearest) nearest = d; } }
+      let speed;
+      if (fx !== 0 || fy !== 0) {
+        bug.dir = Phaser.Math.Angle.RotateTo(bug.dir, Math.atan2(fy, fx), 10 * dt);
+        bug.dir += (Math.random() - 0.5) * 5 * dt;
+        if (Math.random() < ty.juke * dt) bug.dir += (Math.random() < 0.5 ? 1 : -1) * (0.7 + Math.random() * 0.9);
+        bug.fear = true;
+        speed = Phaser.Math.Linear(ty.wander, fleeSpd, Phaser.Math.Clamp(1 - nearest / fleeR, 0, 1));
+        if (bug.stam < 0.25) speed = Math.min(speed, ty.wander * 1.35);
+        bug.stam = Math.max(0, bug.stam - ty.stamD * dt * (speed / Math.max(1, fleeSpd)));
+      } else {
+        if (bug.t > bug.next) { bug.next = bug.t + 0.4 + Math.random() * 0.8; bug.dir += (Math.random() - 0.5) * 2.2; }
+        bug.fear = false; speed = ty.wander; bug.stam = Math.min(1, bug.stam + ty.stamR * dt);
+      }
+      bug.x += Math.cos(bug.dir) * speed * dt; bug.y += Math.sin(bug.dir) * speed * dt;
+      if (bug.x < m || bug.x > W - m) { bug.dir = Math.PI - bug.dir; bug.x = Phaser.Math.Clamp(bug.x, m, W - m); }
+      if (bug.y < m || bug.y > H - m) { bug.dir = -bug.dir; bug.y = Phaser.Math.Clamp(bug.y, m, H - m); }
+    }
+  }
+
+  tryEat() {
+    for (const cr of this.crawlers()) {
+      const head = cr.head, isPlayer = cr === this.player;
+      for (let bi = 0; bi < this.bugs.length; bi++) {
+        const bug = this.bugs[bi];
+        if (Math.hypot(head.x - bug.x, head.y - bug.y) < HEAD_R + bug.type.r + EAT_PAD) {
+          let pts = bug.type.pts;
+          if (isPlayer) { this.combo = (this.gameT - this.lastEat <= COMBO_WINDOW) ? Math.min(COMBO_MAX, this.combo + 1) : 1; this.lastEat = this.gameT; pts = Math.round(pts * this.combo); }
+          cr.score += pts; cr.growBank += pts;
+          while (cr.growBank >= GROW_COST) { cr.growBank -= GROW_COST; cr.grow(); }
+          this.eaten++;
+          this.rings.push({ x: bug.x, y: bug.y, r: 6, life: 1 });
+          this.burst(bug.x, bug.y, bug.type.color, 14);
+          this.audio.capture(!isPlayer ? 'rival' : (bug.type === BUG_TYPES.golden ? 'golden' : 'player'));
+          this.bugs[bi] = this.makeBug();
+        }
+      }
+    }
+  }
+
+  headHitsBody(head, seg) { for (let i = 0; i < seg.length; i++) if (Math.hypot(head.x - seg[i].x, head.y - seg[i].y) < HEAD_R + SEG_R * 0.6) return true; return false; }
+  burst(x, y, color, n) { for (let i = 0; i < n; i++) { const a = Math.random() * Math.PI * 2, sp = 60 + Math.random() * 150;
+    this.fx.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: 1, color }); } }
+  updateFX(dt) {
+    for (const p of this.fx) { p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= 0.92; p.vy *= 0.92; p.life -= dt / 0.55; }
+    this.fx = this.fx.filter(p => p.life > 0);
+    for (const r of this.rings) { r.r += 220 * dt; r.life -= dt / 0.45; }
+    this.rings = this.rings.filter(r => r.life > 0);
+  }
+  draw() {
+    const g = this.g; g.clear();
+    for (const bug of this.bugs) {
+      const ty = bug.type, winded = bug.stam < 0.25;
+      const wig = winded ? 5 : (bug.fear ? 22 : 12), amp = winded ? 1.5 : (bug.fear ? 3.5 : 2), al = ty.r + 2;
+      g.fillStyle(winded ? 0x8f9a86 : (bug.fear ? ty.fear : ty.color), 1); g.fillCircle(bug.x, bug.y, ty.r);
+      g.lineStyle(1.5, ty.ant, 0.9);
+      for (const side of [1, -1]) { g.beginPath(); g.moveTo(bug.x, bug.y); g.lineTo(bug.x + side * al, bug.y - al + Math.sin(bug.t * wig) * amp); g.strokePath(); }
+    }
+    this.ai.draw(g); this.player.draw(g);
+    for (const r of this.rings) { g.lineStyle(2, 0x9dff6a, Math.max(0, r.life) * 0.6); g.strokeCircle(r.x, r.y, r.r); }
+    for (const p of this.fx) { g.fillStyle(p.color, Math.max(0, p.life)); g.fillCircle(p.x, p.y, 2.5 * p.life + 0.5); }
+  }
+}
+
+window.__game = new Phaser.Game({
+  type: Phaser.AUTO, width: window.innerWidth, height: window.innerHeight,
+  scene: Game, scale: { mode: Phaser.Scale.RESIZE, autoCenter: Phaser.Scale.CENTER_BOTH },
+});
+</script>
+</body>
+</html>
