@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>energy gravity — hear the pull</title>
+<style>
+  html,body{ margin:0; height:100%; background:#05060b; overflow:hidden; color:#e9ecf4;
+    font-family:'Space Grotesk',system-ui,sans-serif; }
+  #c{ position:fixed; inset:0; z-index:0; }
+  .ui{ position:fixed; z-index:5; font-family:'IBM Plex Mono',ui-monospace,monospace; pointer-events:none; user-select:none; }
+  #t{ left:24px; top:18px; font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:#aeb6c8; max-width:46vw; }
+  #t span{ color:#6b76a0; text-transform:none; letter-spacing:.04em; }
+  #phint{ left:0; right:0; bottom:54px; text-align:center; font-size:10.5px; color:#5a6486; letter-spacing:.04em; }
+  /* palette — click a word to add/remove it from the field */
+  #palette{ position:fixed; left:0; right:0; bottom:0; z-index:6; display:flex; flex-wrap:wrap; gap:7px; justify-content:center;
+    padding:14px 18px 16px; background:linear-gradient(0deg, rgba(5,6,11,.92), rgba(5,6,11,0)); pointer-events:auto; }
+  .chip{ font-family:'IBM Plex Mono',monospace; font-size:12px; padding:5px 11px; border-radius:999px; cursor:pointer;
+    border:1px solid var(--c); color:var(--c); background:transparent; opacity:.4; transition:opacity .2s, background .2s, transform .1s; }
+  .chip.on{ opacity:1; background:color-mix(in srgb, var(--c) 18%, transparent); }
+  .chip:active{ transform:scale(.94); }
+  #bar{ position:fixed; right:24px; top:16px; z-index:6; display:flex; align-items:center; gap:14px;
+    font-family:'IBM Plex Mono',monospace; font-size:11px; color:#69748c; }
+  #bar button{ font:inherit; color:#9aa3c0; background:rgba(140,160,210,.1); border:1px solid rgba(140,160,210,.2);
+    border-radius:7px; padding:5px 9px; cursor:pointer; }
+  #bar .on{ color:#7fc4ff; border-color:#7fc4ff; }
+  input[type=range]{ accent-color:#7fc4ff; width:80px; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="t" class="ui">energy gravity<br><span>drag · listen · find which ones are secretly one</span></div>
+<div id="phint" class="ui">click a word to add · click a node to remove · drag to move</div>
+<div id="bar">
+  <button id="sound">🔊 sound: off</button>
+  <span>vol <input id="vol" type="range" min="0" max="100" value="55"></span>
+</div>
+<div id="palette"></div>
+<script>
+const cv=document.getElementById('c'), ctx=cv.getContext('2d');
+let W,H; function resize(){ const d=Math.min(devicePixelRatio,2); W=innerWidth;H=innerHeight;
+  cv.width=W*d;cv.height=H*d; cv.style.width=W+'px';cv.style.height=H+'px'; ctx.setTransform(d,0,0,d,0,0);}
+addEventListener('resize',resize); resize();
+
+// ── word-energies: each carries a COLOR (temperature/feeling) + a FREQUENCY (pitch/energy) ──
+const E=[
+  {n:'deep',  c:'#2a3a66', f:262}, {n:'sad',   c:'#37547a', f:330}, {n:'ache',  c:'#8a6a9a', f:311},
+  {n:'still', c:'#6a8fa8', f:393}, {n:'calm',  c:'#5fb89a', f:440}, {n:'sky',   c:'#7fc4ff', f:494},
+  {n:'tender',c:'#f7a8c4', f:349}, {n:'hope',  c:'#ffb454', f:392}, {n:'warm',  c:'#ff8a5c', f:466},
+  {n:'joy',   c:'#ffd84a', f:524}, {n:'fast',  c:'#ff3a2a', f:523}, {n:'rage',  c:'#d11f1f', f:554},
+  {n:'sharp', c:'#ff5ea8', f:622}, {n:'wild',  c:'#ff7a1a', f:698}, {n:'tense', c:'#b25cff', f:370},
+  {n:'dread', c:'#5a3a7a', f:415},
+  // sensory/invoking words (the trees: fire the thing, don't name it). pitches tuned for octave/unison kinships.
+  {n:'ember', c:'#ff7a3a', f:294}, {n:'drift', c:'#9ab0c8', f:588}, // ember/drift = octave
+  {n:'spark', c:'#ffe04a', f:660}, // spark = sad's octave (bright is sad, doubled)
+  {n:'frost', c:'#cfeaff', f:784}, // frost = hope's octave (cold is warm, doubled)
+  {n:'glow',  c:'#ffc070', f:466}, // glow = warm (unison — one note)
+  {n:'ash',   c:'#8d8d97', f:262}, // ash = deep (unison)
+  {n:'bloom', c:'#ff9ec0', f:440}, // bloom = calm (unison)
+  {n:'hush',  c:'#9ab4c4', f:349}, // hush = tender (unison)
+  {n:'storm', c:'#44406a', f:233}, {n:'dawn',  c:'#ffcf9a', f:524},
+  {n:'rush',  c:'#ff3d5a', f:880}, // rush = calm's octave (fast is calm)
+  {n:'vast',  c:'#2a4a6a', f:196},
+];
+E.forEach(e=>{ e.on=false; e.x=W/2; e.y=H/2; e.vx=0; e.vy=0; e.r=17; e.osc=null; e.gain=null; e.eng=0; });
+
+// CONSONANCE — closeness to a simple integer ratio (constructive interference). Sharp: tritone ≈ 0.
+const SIMPLE=[[1,1],[9,8],[6,5],[5,4],[4,3],[3,2],[8,5],[5,3],[9,5],[2,1]];
+function consonance(a,b){ let r=Math.max(a,b)/Math.min(a,b); while(r>2.001) r/=2; let best=0;
+  for(const[p,q]of SIMPLE){ const close=Math.max(0,1-Math.abs(r-p/q)*12); best=Math.max(best,close*(1/(p+q))*6);} return best; }
+
+// ── audio: every active node is a sustained voice; gain follows how engaged it is in the field.
+//    consonant neighbours → sweet chord; dissonant-but-close → real acoustic BEATING = the tension, heard.
+let actx,master,soundOn=false;
+function initAudio(){ if(actx)return; actx=new(window.AudioContext||webkitAudioContext)();
+  const comp=actx.createDynamicsCompressor(); comp.threshold.value=-18; comp.ratio.value=12;
+  master=actx.createGain(); master.gain.value=(+vol.value/100)*0.5; master.connect(comp); comp.connect(actx.destination); }
+function voiceOn(e){ if(!actx||e.osc) return; e.osc=actx.createOscillator(); e.gain=actx.createGain();
+  e.osc.type='sine'; e.osc.frequency.value=e.f; e.gain.gain.value=0; e.osc.connect(e.gain); e.gain.connect(master); e.osc.start(); }
+function voiceOff(e){ if(!e.osc)return; const o=e.osc,g=e.gain; g.gain.setTargetAtTime(0,actx.currentTime,0.05);
+  setTimeout(()=>{ try{o.stop();}catch(_){} },200); e.osc=null; e.gain=null; }
+const vol=document.getElementById('vol'); vol.oninput=()=>{ if(master) master.gain.value=(+vol.value/100)*0.5; };
+document.getElementById('sound').onclick=function(){ initAudio(); if(actx.state==='suspended')actx.resume();
+  soundOn=!soundOn; this.textContent='🔊 sound: '+(soundOn?'on':'off'); this.classList.toggle('on',soundOn);
+  E.forEach(e=>{ if(soundOn&&e.on) voiceOn(e); else if(!soundOn) voiceOff(e); }); };
+
+// ── palette: toggle energies in/out of the field ──
+const pal=document.getElementById('palette');
+E.forEach(e=>{ const chip=document.createElement('div'); chip.className='chip'; chip.textContent=e.n;
+  chip.style.setProperty('--c',e.c); chip.onclick=()=>toggle(e,chip); pal.appendChild(chip); e.chip=chip; });
+function toggle(e,chip){ e.on=!e.on; chip.classList.toggle('on',e.on);
+  if(e.on){ e.x=W/2+(Math.random()-0.5)*W*0.4; e.y=H/2+(Math.random()-0.5)*H*0.3; e.vx=e.vy=0; if(soundOn)voiceOn(e); }
+  else voiceOff(e); }
+// seed a few so it isn't empty
+['deep','sad','calm','sky','hope','fast','tense'].forEach(n=>{ const e=E.find(x=>x.n===n); toggle(e,e.chip); });
+
+// ── interaction ──
+let drag=null, mx=0,my=0, downX=0,downY=0, downNode=null;
+cv.addEventListener('pointerdown',e=>{ downX=e.clientX; downY=e.clientY; downNode=null;
+  for(const en of E){ if(en.on&&Math.hypot(e.clientX-en.x,e.clientY-en.y)<en.r+6){drag=en;downNode=en;break;} } });
+addEventListener('pointermove',e=>{ mx=e.clientX;my=e.clientY; if(drag){drag.x=e.clientX;drag.y=e.clientY;drag.vx=drag.vy=0;} });
+addEventListener('pointerup',e=>{ // a click (no drag) on a node removes it; a drag just moves it
+  if(downNode && Math.hypot(e.clientX-downX,e.clientY-downY)<5) toggle(downNode, downNode.chip);
+  drag=null; downNode=null; });
+
+function step(){
+  const act=E.filter(e=>e.on);
+  for(const e of act) e.eng=0;
+  for(let i=0;i<act.length;i++) for(let j=i+1;j<act.length;j++){
+    const a=act[i],b=act[j]; let dx=b.x-a.x,dy=b.y-a.y,d=Math.hypot(dx,dy)||0.01; dx/=d;dy/=d;
+    const k=consonance(a.f,b.f);
+    const want=90+(1-k)*250; const pull=(d-want)*(0.0006+k*0.0016);
+    if(a!==drag){a.vx+=dx*pull;a.vy+=dy*pull;} if(b!==drag){b.vx-=dx*pull;b.vy-=dy*pull;}
+    if(d<44){const s=(44-d)*0.004; if(a!==drag){a.vx-=dx*s;a.vy-=dy*s;} if(b!==drag){b.vx+=dx*s;b.vy+=dy*s;}}
+    // engagement: any close neighbour makes a voice sound; consonant ones more (so you hear sweet AND beating)
+    const prox=Math.max(0,1-d/240); a.eng+=prox*(0.45+k); b.eng+=prox*(0.45+k);
+  }
+  for(const e of act){ if(e===drag)continue; e.vx+=(W/2-e.x)*0.00018; e.vy+=(H/2-e.y)*0.00018; e.vx*=0.90;e.vy*=0.90; e.x+=e.vx;e.y+=e.vy; }
+  // drive the voices from engagement
+  if(actx&&soundOn) for(const e of act) if(e.gain) e.gain.gain.setTargetAtTime(Math.min(0.05,e.eng*0.016), actx.currentTime, 0.08);
+}
+function draw(){
+  const act=E.filter(e=>e.on); ctx.clearRect(0,0,W,H);
+  for(let i=0;i<act.length;i++) for(let j=i+1;j<act.length;j++){ const a=act[i],b=act[j]; const k=consonance(a.f,b.f); if(k<0.26)continue;
+    ctx.globalAlpha=0.1+k*0.55; ctx.strokeStyle='#9fc2ff'; ctx.lineWidth=0.5+k*2.5;
+    ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke(); }
+  ctx.globalAlpha=1; ctx.globalCompositeOperation='lighter';
+  for(const e of act){ const g=ctx.createRadialGradient(e.x,e.y,0,e.x,e.y,e.r*2.6); g.addColorStop(0,e.c); g.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=g; ctx.beginPath(); ctx.arc(e.x,e.y,e.r*(2.2+Math.min(e.eng,2)*0.4),0,7); ctx.fill(); }
+  ctx.globalCompositeOperation='source-over';
+  for(const e of act){ ctx.fillStyle=e.c; ctx.beginPath(); ctx.arc(e.x,e.y,e.r,0,7); ctx.fill();
+    ctx.fillStyle='#05060b'; ctx.font='600 11px IBM Plex Mono, monospace'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(e.n,e.x,e.y); }
+}
+function loop(){ step(); draw(); requestAnimationFrame(loop); } loop();
+</script>
+</body>
+</html>
