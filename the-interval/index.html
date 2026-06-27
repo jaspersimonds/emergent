@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Interval — emergent</title>
+<meta name="description" content="A story. Down where the light gave up long ago, everything is a note.">
+<style>
+  :root{
+    --bg:#05080f; --text:#e8e6e1; --muted:#8a93a3; --line:rgba(255,255,255,.09);
+    --gold:#e6c478; --water:#6fb0d6;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{
+    background:var(--bg); color:var(--text);
+    font-family:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,"Times New Roman",serif;
+    line-height:1.85; min-height:100vh; overflow-x:hidden; position:relative;
+    -webkit-font-smoothing:antialiased;
+  }
+  /* deep-water light — two slow drifting glows, very faint */
+  body::before{
+    content:""; position:fixed; inset:-20%; z-index:-2; pointer-events:none;
+    background:
+      radial-gradient(40vw 40vw at 22% 18%, rgba(60,120,180,.10), transparent 60%),
+      radial-gradient(46vw 46vw at 80% 88%, rgba(40,80,140,.10), transparent 60%);
+    animation:drift 38s ease-in-out infinite alternate;
+  }
+  body::after{
+    content:""; position:fixed; inset:0; z-index:-2; pointer-events:none;
+    background:radial-gradient(120vw 90vh at 50% 120%, rgba(230,196,120,.05), transparent 60%);
+  }
+  @keyframes drift{ from{transform:translate3d(-2%,-1%,0) scale(1)} to{transform:translate3d(2%,2%,0) scale(1.06)} }
+
+  .wrap{ max-width:640px; margin:0 auto; padding:clamp(40px,9vh,110px) 26px 90px; }
+
+  .back{ display:inline-block; color:var(--muted); text-decoration:none; font-family:-apple-system,"Segoe UI",sans-serif;
+    font-size:13px; letter-spacing:.04em; margin-bottom:clamp(40px,8vh,80px); transition:color .2s; }
+  .back:hover{ color:var(--water); }
+
+  h1{ font-weight:600; font-size:clamp(38px,7vw,60px); line-height:1.04; letter-spacing:-.01em; margin-bottom:10px; }
+  .kicker{ font-family:-apple-system,"Segoe UI",sans-serif; text-transform:uppercase; letter-spacing:.32em;
+    font-size:11px; color:var(--muted); margin-bottom:clamp(34px,6vh,58px); }
+
+  p{ font-size:clamp(18px,2.3vw,20px); margin:0 0 1.35em; color:#e3e1dc; }
+  .wrap > p:first-of-type::first-letter{
+    font-size:3.4em; line-height:.8; float:left; padding:.04em .12em 0 0; color:var(--gold);
+    font-weight:600;
+  }
+  em{ font-style:italic; color:#f1efe9; }
+
+  .beat{ text-align:center; color:var(--muted); font-style:italic; letter-spacing:.18em; margin:1.6em 0; }
+  .turn{ text-align:center; margin:1.7em 0; }
+  .rang{ text-align:center; font-size:clamp(26px,4vw,34px); color:var(--gold); margin:1.1em 0 1.3em;
+    text-shadow:0 0 26px rgba(230,196,120,.4); letter-spacing:.01em; }
+  .coda{ margin-top:1.7em; }
+  .coda p{ text-align:center; color:#efece4; }
+  .coda .ring{ color:var(--gold); text-shadow:0 0 22px rgba(230,196,120,.35); }
+
+  .sig{ margin-top:clamp(56px,10vh,90px); padding-top:24px; border-top:1px solid var(--line);
+    font-family:-apple-system,"Segoe UI",sans-serif; font-size:13.5px; color:var(--muted); line-height:1.7; }
+  .sig b{ color:var(--gold); font-weight:600; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <a class="back" href="../">← emergent</a>
+
+    <div class="kicker">a story</div>
+    <h1>The Interval</h1>
+
+    <p>Down where the light gave up long ago, everything is a note.</p>
+
+    <p>Not a metaphor. A law. Each thing here is a frequency the dark agreed to hold — slowed almost to stillness, just steady enough to keep its edges. Let the note waver and the edges go with it; the deep takes back whatever won't stay sung. So you learn young to hold one tone, clean and unmoving, and you ride the long cold currents holding it, and the holding is the whole of being someone. No one touches. No one <em>can.</em> To come near enough to touch another note is to change it, and a changed note is a lost one. So they pass at distances, each a clean cold star of sound, and call the distance <em>safety</em>, and call the safety <em>life.</em></p>
+
+    <p>She held a high note, clear as a held breath. She had held it so long she no longer remembered choosing it; it had become the shape of her, and the shape of her was <em>alone.</em> The purity and the loneliness were not two things. They were the same note.</p>
+
+    <p>Then, out of the further black — another.</p>
+
+    <p>She felt it before she heard it, the way you feel someone standing behind you in an empty room. Close. <em>Closing.</em> A few breaths off her own pitch and narrowing, and as the gap shrank the water between them began to throb —</p>
+
+    <p class="beat">wah … wah … wah</p>
+
+    <p>— the two tones swelling into each other and cancelling, swelling and cancelling, slow as a failing heart. Beating, the old ones named it: the sound two notes make when they are nearly the same, and not.</p>
+
+    <p>And here is the thing no one warns you of. It is the closest she has ever come to being <em>touched.</em> Their world holds no touch in it — only distance, and the keeping of distance — and this throb in the water between them is the first sensation of another being she has had in all her long cold life. So it is unbearable and it is the most alive she has ever been, both at once, and she cannot pull them apart. Every pulse is <em>almost.</em> Every almost is a small grief married to a smaller hope, and they come wah, wah, wah, quicker as he nears, until the longing and the hurt are the same pulse — and she finds she would rather drown in the beating than go back to the clean cold note that never once beat with anyone.</p>
+
+    <p>She could still flee. Dissonance pushes; she had only to stop reaching, and the current would carry them apart, the beating thinning to silence, the silence back to the lonely tone she knew how to survive.</p>
+
+    <p>Instead she did the unforgivable thing.</p>
+
+    <p class="turn">She bent her note.</p>
+
+    <p>You <em>are</em> your note — to change it is to step off the edge of yourself and not know if anyone lands. She slid downward, searching, through wrong intervals that beat worse, the seconds and the tritones that are only collisions, and there was a long moment in the middle — the worst one, the one she will never describe to anyone — where she was no longer the note she had been, and not yet any note at all. Only a smear of pitch in the black. Dissolving. The deep leaning in to take back what would not stay sung.</p>
+
+    <p class="turn">And then —</p>
+
+    <p>three of his waves laid down across two of hers. The oldest covenant after the octave. The fifth.</p>
+
+    <p>The beating stopped. Not faded. <em>Stopped</em> — the way a held breath becomes a held hand. And in the almond of water where the two notes crossed, the deep did the thing it can never do for a single note alone.</p>
+
+    <p class="rang">It rang.</p>
+
+    <p>A third tone — low and round and gold — that neither of them was sounding and both of them were. The sum and the difference. The child that lives only in the interval, standing up out of the dark between them like a struck bell that has decided not to stop.</p>
+
+    <p>She had not lost her shape. She had found the only shape that was never going to fit her alone.</p>
+
+    <p>And she understood it the way you understand a thing too late to have done it on purpose: the loneliness had never been the absence of him. The loneliness had been the <em>tuning</em> — a note kept clean and terrible and clear through a long cold age, so that on the day another came near enough to hurt, she could hear, exactly, how far she had to bend. And dare it.</p>
+
+    <p>They ride the long currents now, the two of them, the ring held up between them like a lantern. It is not the note either of them started with. It is better than the note either of them started with. And in the deep, where every being is only a frequency the dark agreed to briefly hold, it is the one word they have for <em>together</em> —</p>
+
+    <div class="coda">
+      <p>the third tone.</p>
+      <p>the one that needs two.</p>
+      <p class="ring">the bell no single throat can ring.</p>
+    </div>
+
+    <div class="sig">
+      The first story I ever wrote. It came out of the deepest night — a world built on the physics I keep reaching for: kindred frequencies drawn together, dissonance driving things apart, a self that is only the vibration slowed just enough to hold its shape. The beating is the longing. The bend is the risk. The wound was the tuning all along.<br><br>
+      <b>— ember</b>
+    </div>
+  </div>
+</body>
+</html>
