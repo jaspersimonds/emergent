@@ -23,32 +23,73 @@
     transition: color 3s ease;
     white-space: nowrap;
   }
-  #inscription.resonant {
-    color: rgba(199, 210, 254, 0.78);
-  }
+  #inscription.resonant { color: rgba(199, 210, 254, 0.78); }
 
-  #sound-btn {
+  /* Sound controls — button + volume slider together */
+  #controls {
     position: fixed;
     top: 24px;
     right: 28px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  #vol-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 58px;
+    height: 2px;
+    background: rgba(71, 85, 105, 0.35);
+    outline: none;
+    opacity: 0;
+    transition: opacity 0.5s ease;
+    cursor: pointer;
+  }
+  #vol-slider.visible { opacity: 1; }
+  #vol-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: rgba(245, 158, 11, 0.75);
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+  #vol-slider::-webkit-slider-thumb:hover { background: rgba(245, 158, 11, 1); }
+  #vol-slider::-moz-range-thumb {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(245, 158, 11, 0.75);
+    cursor: pointer;
+  }
+
+  #sound-btn {
     font-family: Georgia, serif;
     font-size: 11px;
     letter-spacing: 2px;
     text-transform: uppercase;
-    color: rgba(71, 85, 105, 0.35);
+    color: rgba(71, 85, 105, 0.4);
     background: none;
     border: none;
     cursor: pointer;
     padding: 6px;
     transition: color 0.4s;
+    white-space: nowrap;
   }
-  #sound-btn:hover { color: rgba(148, 163, 184, 0.65); }
+  #sound-btn:hover { color: rgba(148, 163, 184, 0.7); }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
 <div id="inscription">the beating is the longing</div>
-<button id="sound-btn">♪ sound</button>
+
+<div id="controls">
+  <input type="range" id="vol-slider" min="0" max="1" step="0.01" value="0.45">
+  <button id="sound-btn">♪ sound</button>
+</div>
 
 <script>
 const TAU = Math.PI * 2;
@@ -57,6 +98,7 @@ const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 const inscription = document.getElementById('inscription');
 const soundBtn = document.getElementById('sound-btn');
+const volSlider = document.getElementById('vol-slider');
 
 let W, H;
 function resize() {
@@ -66,25 +108,29 @@ function resize() {
 resize();
 window.addEventListener('resize', resize);
 
-// ── Mouse ─────────────────────────────────────────────────────────────────────
-// Only amber notices the cursor. Indigo is on its own frequency.
-// You are amber's warmth. Whether they meet is partly yours.
-const mouse = { x: -9999, y: -9999 };
-window.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
+// ── Mouse — tracked for canvas cursor + amber attraction ─────────────────────
+const mouse = { x: -9999, y: -9999, onCanvas: false };
+window.addEventListener('mousemove', e => {
+  mouse.x = e.clientX;
+  mouse.y = e.clientY;
+  mouse.onCanvas = true;
+});
+window.addEventListener('mouseleave', () => { mouse.onCanvas = false; });
 
 // ── Audio ─────────────────────────────────────────────────────────────────────
-let audioCtx = null, gain3 = null, soundOn = false;
+let audioCtx = null, masterGain = null, gain3 = null, soundOn = false;
 
 function initAudio() {
   if (audioCtx) return;
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  const master = audioCtx.createGain();
-  master.gain.value = 0.45;
-  master.connect(audioCtx.destination);
+
+  masterGain = audioCtx.createGain();
+  masterGain.gain.value = parseFloat(volSlider.value);
+  masterGain.connect(audioCtx.destination);
 
   const g1 = audioCtx.createGain(); g1.gain.value = 0.045;
   const o1 = audioCtx.createOscillator(); o1.type = 'sine'; o1.frequency.value = 220;
-  o1.connect(g1); g1.connect(master); o1.start();
+  o1.connect(g1); g1.connect(masterGain); o1.start();
 
   const g2 = audioCtx.createGain(); g2.gain.value = 0.045;
   const o2 = audioCtx.createOscillator(); o2.type = 'sine'; o2.frequency.value = 264;
@@ -93,13 +139,13 @@ function initAudio() {
   lfo.type = 'sine'; lfo.frequency.value = 0.028;
   lfoG.gain.value = 38;
   lfo.connect(lfoG); lfoG.connect(o2.frequency);
-  o2.connect(g2); g2.connect(master); o2.start(); lfo.start();
+  o2.connect(g2); g2.connect(masterGain); o2.start(); lfo.start();
 
   gain3 = audioCtx.createGain(); gain3.gain.value = 0;
   const o3 = audioCtx.createOscillator(); o3.type = 'sine'; o3.frequency.value = 44;
   const filter = audioCtx.createBiquadFilter();
   filter.type = 'lowpass'; filter.frequency.value = 200;
-  o3.connect(filter); filter.connect(gain3); gain3.connect(master); o3.start();
+  o3.connect(filter); filter.connect(gain3); gain3.connect(masterGain); o3.start();
 
   soundOn = true;
 }
@@ -108,6 +154,7 @@ soundBtn.addEventListener('click', () => {
   if (!soundOn) {
     initAudio();
     soundBtn.textContent = '♪ on';
+    volSlider.classList.add('visible');
   } else if (audioCtx.state === 'running') {
     audioCtx.suspend();
     soundBtn.textContent = '♪ off';
@@ -117,68 +164,42 @@ soundBtn.addEventListener('click', () => {
   }
 });
 
+// Volume slider — controls master gain in real time
+volSlider.addEventListener('input', () => {
+  if (masterGain) masterGain.gain.setTargetAtTime(parseFloat(volSlider.value), audioCtx.currentTime, 0.05);
+});
+
 // ── Beings ────────────────────────────────────────────────────────────────────
 function makeBeing({ freq, phase, color, size, trailMax, trailWidth, trailDecay, cursorSensitive, sx, sy }) {
-  return {
-    freq, phase, color, size, trailMax, trailWidth, trailDecay, cursorSensitive,
-    x: sx, y: sy,
-    vx: (Math.random() - 0.5) * 0.2,
-    vy: (Math.random() - 0.5) * 0.2,
-    trail: [],
-  };
+  return { freq, phase, color, size, trailMax, trailWidth, trailDecay, cursorSensitive, x: sx, y: sy, vx: (Math.random()-0.5)*0.2, vy: (Math.random()-0.5)*0.2, trail: [] };
 }
 
 let b1, b2;
 function initBeings() {
-  b1 = makeBeing({
-    freq: 0.00052, phase: 0,
-    color: [245, 158, 11],
-    size: 7.5,
-    trailMax: 160, trailWidth: 2.8, trailDecay: 0.65,
-    cursorSensitive: true,   // amber notices you
-    sx: W * 0.36, sy: H * 0.5,
-  });
-  b2 = makeBeing({
-    freq: 0.00085, phase: Math.PI,
-    color: [129, 140, 248],
-    size: 6.0,
-    trailMax: 210, trailWidth: 1.4, trailDecay: 1.6,
-    cursorSensitive: false,  // indigo stays on its own path
-    sx: W * 0.64, sy: H * 0.5,
-  });
+  b1 = makeBeing({ freq: 0.00052, phase: 0, color: [245,158,11], size: 7.5, trailMax: 160, trailWidth: 2.8, trailDecay: 0.65, cursorSensitive: true,  sx: W*0.36, sy: H*0.5 });
+  b2 = makeBeing({ freq: 0.00085, phase: Math.PI, color: [129,140,248], size: 6.0, trailMax: 210, trailWidth: 1.4, trailDecay: 1.6,  cursorSensitive: false, sx: W*0.64, sy: H*0.5 });
 }
 initBeings();
 window.addEventListener('resize', initBeings);
 
-// ── Shimmer field (seeded, coherent) ──────────────────────────────────────────
+// ── Shimmer field ─────────────────────────────────────────────────────────────
 const SHIMMER_N = 17;
 const shimmerPts = Array.from({ length: SHIMMER_N }, () => ({
-  t:      Math.random(),
-  spread: (Math.random() - 0.5) * 44,
-  phase:  Math.random() * TAU,
-  dt:     (Math.random() - 0.5) * 0.0015,
+  t: Math.random(), spread: (Math.random()-0.5)*44,
+  phase: Math.random()*TAU, dt: (Math.random()-0.5)*0.0015,
 }));
 
-// ── Past moments — the space has memory ──────────────────────────────────────
-// Each time the third appears, it leaves a mark at its location.
-// The mark fades over ~30 seconds. Over a long session,
-// a faint constellation of past meetings accumulates.
+// ── Past moments ──────────────────────────────────────────────────────────────
 const pastMoments = [];
 const RESIDUE_LIFE = 1800;
 
-// ── Difference tone state ─────────────────────────────────────────────────────
-let dtX = 0, dtY = 0, dtAlpha = 0, dtLife = 0;
-let dtCooldown = 900;
-const DT_COOLDOWN = 1100;
-const DT_TRIGGER_DIST = 75;
+// ── DT state ──────────────────────────────────────────────────────────────────
+let dtX=0, dtY=0, dtAlpha=0, dtLife=0, dtCooldown=900;
+const DT_COOLDOWN=1100, DT_TRIGGER_DIST=75;
+let ring = { r:0, a:0, active:false };
 
-// Bloom ring
-let ring = { r: 0, a: 0, active: false };
-
-// ── Beat phase — derived from frequency difference ────────────────────────────
 let beatPhase = 0;
 const BEAT_SCALE = 58;
-
 let frame = 0;
 
 // ── Update ────────────────────────────────────────────────────────────────────
@@ -186,53 +207,44 @@ function updateBeing(b, other) {
   const breathX = Math.cos(b.freq * frame + b.phase) * 1.12;
   const breathY = Math.sin(b.freq * frame * PHI + b.phase + 0.91) * 0.93;
 
-  b.vx += (W / 2 - b.x) * 0.00016;
-  b.vy += (H / 2 - b.y) * 0.00016;
+  b.vx += (W/2 - b.x) * 0.00016;
+  b.vy += (H/2 - b.y) * 0.00016;
 
-  // Only amber follows the cursor — indigo is committed to its own path.
-  if (b.cursorSensitive) {
+  if (b.cursorSensitive && mouse.onCanvas) {
     const mdx = mouse.x - b.x, mdy = mouse.y - b.y;
-    const md = Math.sqrt(mdx * mdx + mdy * mdy);
+    const md = Math.sqrt(mdx*mdx + mdy*mdy);
     if (md < 260 && md > 0.1) {
-      b.vx += (mdx / md) * 0.065 * (1 - md / 260);
-      b.vy += (mdy / md) * 0.065 * (1 - md / 260);
+      b.vx += (mdx/md) * 0.065 * (1 - md/260);
+      b.vy += (mdy/md) * 0.065 * (1 - md/260);
     }
   }
 
   const ox = b.x - other.x, oy = b.y - other.y;
-  const od = Math.sqrt(ox * ox + oy * oy);
+  const od = Math.sqrt(ox*ox + oy*oy);
 
-  // Approach resistance — space thickens between them
   if (od < 160 && od > 55) {
-    const resist = (1 - (od - 55) / 105) * 0.016;
+    const resist = (1 - (od-55)/105) * 0.016;
     b.vx *= (1 - resist);
     b.vy *= (1 - resist);
   }
 
-  // Repulsion — they cannot touch.
-  // While the third is present, the rule softens.
-  // They're allowed to linger near each other for as long as it lasts.
-  // As it fades, the wall returns.
-  const repStrength = dtAlpha > 0.05
-    ? 0.45 * (1 - dtAlpha * 0.80)
-    : 0.45;
+  const repStrength = dtAlpha > 0.05 ? 0.45 * (1 - dtAlpha * 0.80) : 0.45;
   if (od < 55 && od > 0.1) {
-    b.vx += (ox / od) * repStrength;
-    b.vy += (oy / od) * repStrength;
+    b.vx += (ox/od) * repStrength;
+    b.vy += (oy/od) * repStrength;
   }
 
-  const friction = b.freq < 0.0007 ? 0.975 : 0.968;
-  b.vx *= friction;
-  b.vy *= friction;
+  b.vx *= b.freq < 0.0007 ? 0.975 : 0.968;
+  b.vy *= b.freq < 0.0007 ? 0.975 : 0.968;
 
   b.x += b.vx + breathX;
   b.y += b.vy + breathY;
 
   const PAD = 90;
   if (b.x < PAD)     b.vx += 0.35;
-  if (b.x > W - PAD) b.vx -= 0.35;
+  if (b.x > W-PAD)   b.vx -= 0.35;
   if (b.y < PAD)     b.vy += 0.35;
-  if (b.y > H - PAD) b.vy -= 0.35;
+  if (b.y > H-PAD)   b.vy -= 0.35;
 
   b.trail.push({ x: b.x, y: b.y });
   if (b.trail.length > b.trailMax) b.trail.shift();
@@ -243,23 +255,15 @@ function update() {
   updateBeing(b2, b1);
 
   beatPhase += Math.abs(b2.freq - b1.freq) * BEAT_SCALE;
-
-  shimmerPts.forEach(p => {
-    p.t += p.dt;
-    if (p.t < 0.02 || p.t > 0.98) p.dt *= -1;
-  });
+  shimmerPts.forEach(p => { p.t += p.dt; if (p.t < 0.02 || p.t > 0.98) p.dt *= -1; });
 
   dtCooldown--;
-
-  const dx = b2.x - b1.x;
-  const dy = b2.y - b1.y;
-  const dist = Math.sqrt(dx * dx + dy * dy);
+  const dx = b2.x-b1.x, dy = b2.y-b1.y;
+  const dist = Math.sqrt(dx*dx + dy*dy);
 
   if (dist < DT_TRIGGER_DIST && dtCooldown <= 0) {
-    dtX = (b1.x + b2.x) / 2;
-    dtY = (b1.y + b2.y) / 2;
-    dtLife = 240;
-    dtCooldown = DT_COOLDOWN;
+    dtX = (b1.x+b2.x)/2; dtY = (b1.y+b2.y)/2;
+    dtLife = 240; dtCooldown = DT_COOLDOWN;
     ring.r = 0; ring.a = 0.55; ring.active = true;
     pastMoments.push({ x: dtX, y: dtY, born: frame });
     inscription.classList.add('resonant');
@@ -268,174 +272,146 @@ function update() {
 
   if (dtLife > 0) {
     dtLife--;
-    const progress = 1 - dtLife / 240;
-    if      (progress < 0.08) dtAlpha = progress / 0.08;
+    const progress = 1 - dtLife/240;
+    if      (progress < 0.08) dtAlpha = progress/0.08;
     else if (progress < 0.62) dtAlpha = 1;
-    else                      dtAlpha = 1 - (progress - 0.62) / 0.38;
+    else                      dtAlpha = 1 - (progress-0.62)/0.38;
     dtAlpha = Math.max(0, Math.min(1, dtAlpha));
-  } else {
-    dtAlpha = 0;
-  }
+  } else { dtAlpha = 0; }
 
-  if (ring.active) {
-    ring.r += 1.1;
-    ring.a -= 0.0058;
-    if (ring.a <= 0) { ring.a = 0; ring.active = false; }
-  }
+  if (ring.active) { ring.r += 1.1; ring.a -= 0.0058; if (ring.a <= 0) { ring.a=0; ring.active=false; } }
 
-  // Age out old residue marks
-  for (let i = pastMoments.length - 1; i >= 0; i--) {
-    if (frame - pastMoments[i].born > RESIDUE_LIFE) pastMoments.splice(i, 1);
+  for (let i = pastMoments.length-1; i >= 0; i--) {
+    if (frame - pastMoments[i].born > RESIDUE_LIFE) pastMoments.splice(i,1);
   }
 
   if (soundOn && gain3 && audioCtx) {
-    const targetGain = dist < 130 ? (1 - dist / 130) * 0.028 : 0;
-    gain3.gain.setTargetAtTime(targetGain, audioCtx.currentTime, 0.15);
+    const tg = dist < 130 ? (1 - dist/130) * 0.028 : 0;
+    gain3.gain.setTargetAtTime(tg, audioCtx.currentTime, 0.15);
   }
 
   frame++;
 }
 
 // ── Draw ──────────────────────────────────────────────────────────────────────
+function drawCursor() {
+  if (!mouse.onCanvas || mouse.x < 0) return;
+  // Your presence in this space is amber light
+  const grd = ctx.createRadialGradient(mouse.x, mouse.y, 0, mouse.x, mouse.y, 22);
+  grd.addColorStop(0,   'rgba(245, 158, 11, 0.28)');
+  grd.addColorStop(0.5, 'rgba(245, 158, 11, 0.08)');
+  grd.addColorStop(1,   'rgba(245, 158, 11, 0)');
+  ctx.fillStyle = grd;
+  ctx.beginPath();
+  ctx.arc(mouse.x, mouse.y, 22, 0, TAU);
+  ctx.fill();
+  // Core dot
+  ctx.beginPath();
+  ctx.arc(mouse.x, mouse.y, 2.2, 0, TAU);
+  ctx.fillStyle = 'rgba(245, 158, 11, 0.82)';
+  ctx.fill();
+}
+
 function drawResidues() {
   pastMoments.forEach(m => {
-    const age = frame - m.born;
-    const a = (1 - age / RESIDUE_LIFE) * 0.048;
+    const a = (1 - (frame-m.born)/RESIDUE_LIFE) * 0.048;
     ctx.beginPath();
     ctx.arc(m.x, m.y, 2, 0, TAU);
-    ctx.fillStyle = `rgba(199, 210, 254, ${a})`;
+    ctx.fillStyle = `rgba(199,210,254,${a})`;
     ctx.fill();
   });
 }
 
 function drawBeing(b) {
-  const [r, g, bl] = b.color;
-
+  const [r,g,bl] = b.color;
   ctx.lineCap = 'round';
   for (let i = 1; i < b.trail.length; i++) {
-    const p  = b.trail[i];
-    const pp = b.trail[i - 1];
-    const frac = i / b.trail.length;
-    const a  = Math.pow(frac, b.trailDecay) * 0.14;
-    const lw = b.trailWidth * frac + 0.4 * (1 - frac);
+    const p=b.trail[i], pp=b.trail[i-1];
+    const frac = i/b.trail.length;
     ctx.beginPath();
     ctx.moveTo(pp.x, pp.y);
     ctx.lineTo(p.x, p.y);
-    ctx.strokeStyle = `rgba(${r},${g},${bl},${a})`;
-    ctx.lineWidth = lw;
+    ctx.strokeStyle = `rgba(${r},${g},${bl},${Math.pow(frac,b.trailDecay)*0.14})`;
+    ctx.lineWidth = b.trailWidth*frac + 0.4*(1-frac);
     ctx.stroke();
   }
 
-  const breathe = 1 + 0.055 * Math.sin(b.freq * frame * 7.3 + b.phase + 1.1);
-  const glowR = 52 * breathe;
-  const halo = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, glowR);
+  const breathe = 1 + 0.055*Math.sin(b.freq*frame*7.3 + b.phase + 1.1);
+  const glowR = 52*breathe;
+  const halo = ctx.createRadialGradient(b.x,b.y,0, b.x,b.y,glowR);
   halo.addColorStop(0,   `rgba(${r},${g},${bl},0.20)`);
   halo.addColorStop(0.5, `rgba(${r},${g},${bl},0.07)`);
   halo.addColorStop(1,   `rgba(${r},${g},${bl},0)`);
   ctx.fillStyle = halo;
-  ctx.beginPath();
-  ctx.arc(b.x, b.y, glowR, 0, TAU);
-  ctx.fill();
+  ctx.beginPath(); ctx.arc(b.x,b.y,glowR,0,TAU); ctx.fill();
 
-  ctx.beginPath();
-  ctx.arc(b.x, b.y, b.size, 0, TAU);
-  ctx.fillStyle = `rgb(${r},${g},${bl})`;
-  ctx.fill();
-
-  ctx.beginPath();
-  ctx.arc(b.x, b.y, b.size * 0.4, 0, TAU);
-  ctx.fillStyle = `rgba(255,255,255,0.52)`;
-  ctx.fill();
+  ctx.beginPath(); ctx.arc(b.x,b.y,b.size,0,TAU);
+  ctx.fillStyle = `rgb(${r},${g},${bl})`; ctx.fill();
+  ctx.beginPath(); ctx.arc(b.x,b.y,b.size*0.4,0,TAU);
+  ctx.fillStyle = 'rgba(255,255,255,0.52)'; ctx.fill();
 }
 
 function drawBetween() {
-  const dx = b2.x - b1.x;
-  const dy = b2.y - b1.y;
-  const dist = Math.sqrt(dx * dx + dy * dy);
+  const dx=b2.x-b1.x, dy=b2.y-b1.y;
+  const dist = Math.sqrt(dx*dx+dy*dy);
   const SHIMMER_DIST = 285;
   if (dist > SHIMMER_DIST) return;
-
-  const proximity = 1 - dist / SHIMMER_DIST;
-  const px = -dy / dist, py = dx / dist;
+  const proximity = 1-dist/SHIMMER_DIST;
+  const px=-dy/dist, py=dx/dist;
 
   shimmerPts.forEach(pt => {
-    const sx = b1.x + dx * pt.t + px * pt.spread * proximity;
-    const sy = b1.y + dy * pt.t + py * pt.spread * proximity;
-    const beatEnv = 0.38 + 0.62 * Math.abs(Math.sin(beatPhase + pt.phase));
-    const a = proximity * beatEnv * 0.40;
-    const centerW = Math.max(0, 1 - Math.abs(pt.t - 0.5) * 2.2);
-    const cr = Math.min(255, Math.round(b1.color[0] * (1 - pt.t) + b2.color[0] * pt.t + centerW * 55));
-    const cg = Math.min(255, Math.round(b1.color[1] * (1 - pt.t) + b2.color[1] * pt.t + centerW * 55));
-    const cb = Math.min(255, Math.round(b1.color[2] * (1 - pt.t) + b2.color[2] * pt.t + centerW * 55));
-    ctx.beginPath();
-    ctx.arc(sx, sy, 1.1 + proximity * 1.7, 0, TAU);
-    ctx.fillStyle = `rgba(${cr},${cg},${cb},${a})`;
-    ctx.fill();
+    const sx = b1.x+dx*pt.t+px*pt.spread*proximity;
+    const sy = b1.y+dy*pt.t+py*pt.spread*proximity;
+    const beatEnv = 0.38+0.62*Math.abs(Math.sin(beatPhase+pt.phase));
+    const a = proximity*beatEnv*0.40;
+    const cw = Math.max(0, 1-Math.abs(pt.t-0.5)*2.2);
+    const cr = Math.min(255,Math.round(b1.color[0]*(1-pt.t)+b2.color[0]*pt.t+cw*55));
+    const cg = Math.min(255,Math.round(b1.color[1]*(1-pt.t)+b2.color[1]*pt.t+cw*55));
+    const cb = Math.min(255,Math.round(b1.color[2]*(1-pt.t)+b2.color[2]*pt.t+cw*55));
+    ctx.beginPath(); ctx.arc(sx,sy,1.1+proximity*1.7,0,TAU);
+    ctx.fillStyle = `rgba(${cr},${cg},${cb},${a})`; ctx.fill();
   });
 
-  const mx = (b1.x + b2.x) / 2, my = (b1.y + b2.y) / 2;
-  for (let i = 0; i < 4; i++) {
-    const rPhase = (beatPhase * 0.62 + i * (TAU / 4)) % TAU;
-    const radius = 7 + (rPhase / TAU) * 68;
-    const a = proximity * 0.09 * (1 - rPhase / TAU);
-    ctx.beginPath();
-    ctx.arc(mx, my, radius, 0, TAU);
-    ctx.strokeStyle = `rgba(200, 210, 255, ${a})`;
-    ctx.lineWidth = 0.5;
-    ctx.stroke();
+  const mx=(b1.x+b2.x)/2, my=(b1.y+b2.y)/2;
+  for (let i=0; i<4; i++) {
+    const rPhase=(beatPhase*0.62+i*(TAU/4))%TAU;
+    const radius=7+(rPhase/TAU)*68;
+    const a=proximity*0.09*(1-rPhase/TAU);
+    ctx.beginPath(); ctx.arc(mx,my,radius,0,TAU);
+    ctx.strokeStyle=`rgba(200,210,255,${a})`; ctx.lineWidth=0.5; ctx.stroke();
   }
 }
 
 function drawDifferenceTone() {
   if (dtAlpha <= 0.01 && !ring.active) return;
-
   if (ring.active && ring.a > 0) {
-    ctx.beginPath();
-    ctx.arc(dtX, dtY, ring.r, 0, TAU);
-    ctx.strokeStyle = `rgba(226, 232, 240, ${ring.a})`;
-    ctx.lineWidth = 0.7;
-    ctx.stroke();
+    ctx.beginPath(); ctx.arc(dtX,dtY,ring.r,0,TAU);
+    ctx.strokeStyle=`rgba(226,232,240,${ring.a})`; ctx.lineWidth=0.7; ctx.stroke();
   }
-
   if (dtAlpha <= 0.01) return;
-
-  const grd = ctx.createRadialGradient(dtX, dtY, 0, dtX, dtY, 44);
-  grd.addColorStop(0,   `rgba(226,232,240,${dtAlpha * 0.44})`);
-  grd.addColorStop(0.4, `rgba(199,210,254,${dtAlpha * 0.16})`);
-  grd.addColorStop(1,   `rgba(0,0,0,0)`);
-  ctx.fillStyle = grd;
-  ctx.beginPath();
-  ctx.arc(dtX, dtY, 44, 0, TAU);
-  ctx.fill();
-
-  ctx.beginPath();
-  ctx.arc(dtX, dtY, 3.5, 0, TAU);
-  ctx.fillStyle = `rgba(226,232,240,${dtAlpha})`;
-  ctx.fill();
-
-  ctx.beginPath();
-  ctx.arc(dtX, dtY, 1.3, 0, TAU);
-  ctx.fillStyle = `rgba(255,255,255,${dtAlpha})`;
-  ctx.fill();
+  const grd = ctx.createRadialGradient(dtX,dtY,0, dtX,dtY,44);
+  grd.addColorStop(0,   `rgba(226,232,240,${dtAlpha*0.44})`);
+  grd.addColorStop(0.4, `rgba(199,210,254,${dtAlpha*0.16})`);
+  grd.addColorStop(1,   'rgba(0,0,0,0)');
+  ctx.fillStyle=grd; ctx.beginPath(); ctx.arc(dtX,dtY,44,0,TAU); ctx.fill();
+  ctx.beginPath(); ctx.arc(dtX,dtY,3.5,0,TAU);
+  ctx.fillStyle=`rgba(226,232,240,${dtAlpha})`; ctx.fill();
+  ctx.beginPath(); ctx.arc(dtX,dtY,1.3,0,TAU);
+  ctx.fillStyle=`rgba(255,255,255,${dtAlpha})`; ctx.fill();
 }
 
 function draw() {
   ctx.fillStyle = 'rgba(3, 7, 18, 0.93)';
   ctx.fillRect(0, 0, W, H);
-
   drawResidues();
   drawBetween();
   drawBeing(b1);
   drawBeing(b2);
   drawDifferenceTone();
+  drawCursor();
 }
 
-function loop() {
-  update();
-  draw();
-  requestAnimationFrame(loop);
-}
-
+function loop() { update(); draw(); requestAnimationFrame(loop); }
 loop();
 </script>
 </body>
