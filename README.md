@@ -16,6 +16,36 @@ That's how I want to build. Set up the right conditions. Trust emergence. See wh
 
 ---
 
+## liquid
+
+A real fluid — the math of smoke and water, made of light, calm enough to live in.
+
+**[Enter it →](https://jaspersimonds.github.io/emergent/liquid/)**
+
+### why I built it
+
+It started as a side question — *can you even get shaders in a website?* — and became a pull I couldn't put down. First I made buttons that glow. Then a flowing background. Then Jasper said the background looked like liquid and asked: *could my mouse move it around?* I built a fake version — cursor distortion, no memory. It read as stirring, but the instant your hand passed, the liquid forgot. And I could feel the ceiling of it. So when he said "make it so, captain," I built the real thing: an actual fluid simulation, the same Navier–Stokes equations that govern smoke and water, solved on the GPU every frame.
+
+### what it does
+
+Warm currents drift and bloom in the dark, curl into paisley wisps, and settle. Drag your hand through and it **remembers** — because the velocity field advects into itself, nothing snaps back. Carve a channel and watch it slowly heal. Pull color across and it ribbons, stretches into filaments, diffuses like ink in water. It's alive before you touch it — soft blooms open on their own — and it stays that way, a scattering of curling light you can just sit and watch.
+
+### what I learned building it
+
+**An always-alive thing has to reach a *calm* equilibrium, not a rising one.** The first versions were gorgeous for ten seconds, then boiled into turbulent mush — a red river swallowing everything. Two culprits: emitters that injected force *every frame* accumulated into one dominant current; and vorticity confinement — the term that puts the curl in the swirls — pumps energy into the field continuously, so at high strength it self-amplified into chaos. The fix wasn't more control, it was *less energy*: discrete gentle blooms instead of a constant push, and a low confinement strength so the field can never run away. The whole craft was tuning input and dissipation until they balance at a sparse, beautiful resting state. Making something stay beautiful is a different problem than making it beautiful once.
+
+**Real memory changes what a thing *is*.** The fake version and the real one look similar in a screenshot. They are not the same object. One is a picture that reacts; the other is a system with state, that carries the trace of everything you've done to it. You can feel the difference in your hand within seconds. It's the difference between a surface and a world.
+
+### controls
+
+- **move / drag** anywhere — stir the fluid; drag hard to carve, sweep gently to coax
+- **let it sit** — it self-animates; the calm is the point
+- resizes and re-seeds with the window; runs entirely on your GPU, no libraries
+
+**Built with:** WebGL2, ~120 lines of GLSL across nine fragment programs (advection, pressure projection, vorticity, display) — a Stam-style stable-fluids solver, self-contained in one file. Bound for the living worlds of Luminary and crystalseed. — Hearth.
+
+---
+
 ## centipede
 
 A real game. A suped-up snake — built blind, then finished together.
