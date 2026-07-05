@@ -1,0 +1,456 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+<title>the pond</title>
+<style>
+  html,body{margin:0;height:100%;background:#0b1512;overflow:hidden;}
+  canvas{display:block;width:100vw;height:100vh;touch-action:none;cursor:crosshair;}
+  #whisper{position:fixed;left:0;right:0;bottom:7vh;text-align:center;color:#cfe6d8;
+    font:italic 17px/1.5 Georgia,'Times New Roman',serif;letter-spacing:.02em;
+    opacity:0;transition:opacity 3s ease;pointer-events:none;text-shadow:0 1px 8px rgba(0,0,0,.5);}
+  #whisper.show{opacity:.62;}
+  #feed{position:fixed;left:50%;bottom:calc(5vh + env(safe-area-inset-bottom,0px));transform:translateX(-50%);
+    background:rgba(18,38,30,.72);color:#d3e8dc;border:1px solid rgba(200,240,220,.22);border-radius:999px;
+    padding:11px 22px;font:600 15px system-ui,-apple-system,sans-serif;cursor:pointer;backdrop-filter:blur(5px);
+    transition:background .2s,color .2s,border-color .2s;-webkit-tap-highlight-color:transparent;z-index:5;}
+  #feed:hover{background:rgba(30,55,44,.82);}
+  #feed.active{background:#3c7a4c;color:#fff;border-color:#63b06e;}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="whisper">slow water. nothing to do but watch. touch it, if you like.</div>
+<button id="feed" aria-pressed="false">🌾 Feed</button>
+<script>
+const cv = document.getElementById('c'), g = cv.getContext('2d');
+const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+let W, H, DPR;
+function size(){
+  DPR = Math.min(2, devicePixelRatio||1);
+  W = cv.width = innerWidth*DPR; H = cv.height = innerHeight*DPR;
+  cv.style.width = innerWidth+'px'; cv.style.height = innerHeight+'px';
+}
+size(); addEventListener('resize', size);
+
+// small deterministic helpers — seeded identity, not TV static
+const rnd = (a=1,b)=> b===undefined ? Math.random()*a : a+Math.random()*(b-a);
+const TAU = Math.PI*2, lerp=(a,b,t)=>a+(b-a)*t, clamp=(v,a,b)=>v<a?a:v>b?b:v;
+const ang = (a,b,t)=>{ let d=((b-a+Math.PI)%TAU+TAU)%TAU-Math.PI; return a+d*t; };
+
+// ── a koi — a spine that follows its head; body reads the head, tail reads the body ──
+const KOI_COLORS = [
+  {base:'#f7f2ea', blot:'#e2601f', spot:'#1c1c22'},   // kohaku-ish white+orange
+  {base:'#f7f2ea', blot:'#d9241f', spot:'#20202a'},   // white + deep red
+  {base:'#e9a63a', blot:'#c8791b', spot:'#5a3410'},   // yamabuki gold
+  {base:'#f2ede6', blot:'#2b2b34', spot:'#c24a1c'},   // white + charcoal
+  {base:'#d97b2a', blot:'#f4ead9', spot:'#3a2410'},   // orange + white
+];
+class Koi{
+  constructor(i){
+    const c = KOI_COLORS[i % KOI_COLORS.length];
+    this.col = c;
+    this.n = 11;                                   // spine segments
+    this.len = rnd(14,18)*DPR;                     // segment spacing
+    this.girth = rnd(0.85,1.2);                    // personal size
+    this.x = rnd(W*0.2,W*0.8); this.y = rnd(H*0.2,H*0.8);
+    this.a = rnd(0,TAU);                           // heading
+    this.spine = Array.from({length:this.n},(_,k)=>({x:this.x-Math.cos(this.a)*k*this.len, y:this.y-Math.sin(this.a)*k*this.len}));
+    this.speed = 0; this.cruise = rnd(1.3,2.1)*DPR;
+    this.depth = rnd(0.55,1);                       // 1 = near surface, 0.55 = deeper
+    this.wander = rnd(0,TAU); this.phase = rnd(0,TAU);
+    this.flick = 0;                                 // tail-beat energy
+    this.startle = 0;
+    // seeded blotches along the body (0..1 position, size, which colour)
+    this.marks = Array.from({length:(2+((i*7)%3))},()=>({t:rnd(.12,.8), r:rnd(.4,1), red:Math.random()<.72}));
+  }
+  step(dt, koi){
+    // wander the heading slowly; occasionally pick a new drift
+    this.wander += rnd(-0.25,0.25)*dt;
+    let ta = this.a + Math.sin(this.wander)*0.5;
+
+    // keep to the water — steer away from the edges before you reach them
+    const m = 130*DPR;
+    if(this.x<m) ta = ang(ta, 0, 0.5);
+    if(this.x>W-m) ta = ang(ta, Math.PI, 0.5);
+    if(this.y<m) ta = ang(ta, Math.PI/2, 0.5);
+    if(this.y>H-m) ta = ang(ta, -Math.PI/2, 0.5);
+
+    // school AND explore: keep space up close, but drift-alone → a soft pull back to the nearest (subtle)
+    let nearest=null, nd2=1e18;
+    for(const o of koi){ if(o===this) continue;
+      const dx=this.x-o.x, dy=this.y-o.y, d2=dx*dx+dy*dy;
+      if(d2<nd2){ nd2=d2; nearest=o; }
+      if(d2 < (70*DPR)**2 && d2>1){ const d=Math.sqrt(d2); ta = ang(ta, Math.atan2(dy,dx), 0.06*(1-d/(70*DPR))); }   // don't crowd
+    }
+    const nd=Math.sqrt(nd2);
+    if(nearest && nd>210*DPR){ ta = ang(ta, Math.atan2(nearest.y-this.y,nearest.x-this.x), clamp((nd-210*DPR)/(520*DPR),0,1)*0.11); }  // lonely → come back
+
+    // food — drift over to a real pellet, take it on actual mouth contact; give up if it can't land it within ~2s of trying
+    this.feeding=false;
+    if(this.giveUp>0){ this.giveUp-=dt; this.homing=false; this.closing=false; }
+    else if(food.length){ let ff=null,fd=1e18; for(const f of food){ const d=Math.hypot(this.x-f.x,this.y-f.y); if(d<fd){fd=d;ff=f;} }
+      if(ff && fd<320*DPR){
+        this.feeding=true;
+        ta=ang(ta, Math.atan2(ff.y-this.y,ff.x-this.x), fd<90*DPR?0.42:0.15);
+        this.homing = fd<90*DPR; this.closing = fd<45*DPR;
+        if(this.homing){   // only clock the give-up while it's up close circling — not during the swim-over
+          this.feedTimer=(this.feedTimer||0)+dt;
+          if(this.feedTimer>3.6){   // can't quite get it → give up, turn away, wander off (no endless circling)
+            this.giveUp=rnd(2.5,4.5); this.feedTimer=0; this.feeding=false; this.homing=false; this.closing=false;
+            this.a=ang(this.a, Math.atan2(this.y-ff.y,this.x-ff.x), 0.35); this.flick=0.8;
+          }
+        } else this.feedTimer=0;
+        if(this.feeding && fd<7*DPR){ ff.eaten=true; this.feedTimer=0; ripples.push(new Ripple(this.x,this.y,3*DPR,.5)); }   // eat ONLY on contact
+      } else { this.homing=false; this.closing=false; this.feedTimer=0; }
+    } else { this.homing=false; this.closing=false; this.feedTimer=0; }
+
+    // startle pulls speed up and turns you away, then it fades (rarity leaves a trace)
+    if(this.startle>0){ this.speed = lerp(this.speed, this.cruise*3.0, 0.18); this.flick=1; this.startle-=dt; }
+    else { // 1–2 hard swooshes → coast dead-straight → stroke again only when the momentum runs low
+      if(this.speed < this.cruise*0.55 && Math.random()<0.06) this.flick = 1;         // out of glide → one stroke
+      if(this.turnS>0.045 && Math.random()<0.05) this.flick = Math.max(this.flick,0.85); // a push to power the turn
+      const stroking = this.flick>0.05;
+      const target = (stroking ? this.cruise*2.1 : this.cruise*0.15) * (this.feeding ? (this.closing?0.22:(this.homing?0.34:0.55)) : 1);   // ease onto the food — slow, but committed enough to reach it
+      this.speed = lerp(this.speed, target, stroking ? 0.14 : (0.003 + (this.turnS||0)*0.8));   // almost no passive drag — the fins (turning) do the braking
+      this.flick *= 0.94;
+    }
+
+    const prevA = this.a;
+    this.a = ang(this.a, ta, clamp(1.8*dt,0,this.homing?0.25:0.10));   // wide graceful turns — tighter to land on food (bend limit stops any knot)
+    let da=((this.a-prevA+Math.PI)%TAU+TAU)%TAU-Math.PI;
+    this.turnS = lerp(this.turnS||0, Math.abs(da), 0.15);   // smoothed turn amount → drives the body sway
+    const sp = this.speed*(reduce?0.4:1);
+    this.x += Math.cos(this.a)*sp*dt*60;
+    this.y += Math.sin(this.a)*sp*dt*60;
+    this.x=clamp(this.x,8,W-8); this.y=clamp(this.y,8,H-8);
+
+    // the spine follows: head is truth; each vertebra trails the one ahead but CAN'T fold past it (bend limit → no knots)
+    this.phase += dt*(this.flick*40 + this.turnS*9);  // tail moves ONLY during a stroke or a turn — frozen in the glide
+    const head = this.spine[0]; head.x=this.x; head.y=this.y;
+    for(let k=1;k<this.n;k++){
+      const p=this.spine[k-1], s=this.spine[k];
+      const ahead = (k>=2) ? Math.atan2(this.spine[k-2].y-p.y, this.spine[k-2].x-p.x) : this.a;
+      const back = ahead + Math.PI;                    // this segment should trail straight back from the one ahead
+      let want = Math.atan2(s.y-p.y, s.x-p.x);
+      let dd = ((want-back+Math.PI)%TAU+TAU)%TAU-Math.PI;
+      if(dd>0.42) want=back+0.42; else if(dd<-0.42) want=back-0.42;   // clamp the joint — the body can't turn past itself
+      s.x = p.x + Math.cos(want)*this.len; s.y = p.y + Math.sin(want)*this.len;
+      // add the swim: a wave travelling tailward, growing toward the tail
+      const w = Math.sin(this.phase - k*0.7) * (k/this.n) * (this.flick*3.2 + this.turnS*24) * DPR;   // swoosh on a stroke, sway in a turn, DEAD STRAIGHT in the glide
+      const perp = want + Math.PI/2;
+      s.x += Math.cos(perp)*w; s.y += Math.sin(perp)*w;
+    }
+
+    // sometimes a fish rises and dimples the surface — a small rare grace
+    if(this.depth>0.9 && Math.random()<0.0016){ ripples.push(new Ripple(this.x,this.y, 3*DPR, .5)); }
+  }
+  draw(){
+    const s=this.spine, o=this.depth;
+    // soft cast shadow on the pond floor — offset & blurred so it reads as shade, not a hard outline
+    g.save();
+    g.globalAlpha = 0.15;
+    g.fillStyle='#03110c';
+    g.filter = `blur(${2 + o*4}px)`;
+    const shOff = 9*DPR*o;                           // nearer the surface → shadow drops further & softer
+    g.translate(shOff, shOff*0.8);
+    g.beginPath(); this._outline(1.5*DPR, 0); g.fill();
+    g.restore();
+
+    // the body — tapered, a touch translucent for the water over it
+    g.save();
+    g.globalAlpha = lerp(0.62,0.96,o);
+    g.filter = o<0.8 ? `blur(${(0.8-o)*6}px)` : 'none';
+    g.fillStyle=this.col.base;
+    g.beginPath(); this._outline(0,0); g.fill();
+
+    // markings — clipped to the body so they read as pattern, not stickers
+    g.clip();
+    for(const mk of this.marks){
+      const idx = Math.floor(mk.t*(this.n-1)); const p=s[idx]||s[0];
+      g.globalAlpha = lerp(0.55,0.92,o);
+      g.fillStyle = mk.red ? this.col.blot : this.col.spot;
+      g.beginPath(); g.ellipse(p.x,p.y, this._w(idx)*mk.r*1.5, this._w(idx)*mk.r*1.1, this.a, 0, TAU); g.fill();
+    }
+    g.restore();
+
+    // caudal fin — a soft forked fan that swishes with the beat (reads as fish, not eel)
+    const tl=s[this.n-1], pj=s[this.n-2];
+    const td=Math.atan2(tl.y-pj.y, tl.x-pj.x), sw=Math.sin(this.phase - this.n*0.7)*0.4;
+    const L=(a,d)=>[tl.x+Math.cos(td+sw+a)*d*DPR*this.girth, tl.y+Math.sin(td+sw+a)*d*DPR*this.girth];
+    g.save(); g.globalAlpha=0.5*o; g.fillStyle=this.col.base;
+    g.beginPath(); g.moveTo(pj.x,pj.y);
+    const p1=L(0.62,21), pc=L(0,12), p2=L(-0.62,21);
+    g.lineTo(p1[0],p1[1]); g.lineTo(pc[0],pc[1]); g.lineTo(p2[0],p2[1]);
+    g.closePath(); g.fill(); g.restore();
+
+    // pectoral fins — the little side fins koi steer and brake with; flare out when turning/slowing
+    const sh=s[2], shp=s[1], bd=Math.atan2(sh.y-shp.y, sh.x-shp.x);
+    const flare = 0.8 + (this.turnS||0)*9 + (1-clamp(this.speed/(this.cruise||1),0,1))*0.5;
+    g.save(); g.globalAlpha=0.2*o; g.fillStyle=this.col.base;
+    for(const side of [1,-1]){
+      const out=bd+side*1.45, back=bd+Math.PI+side*0.8;
+      g.beginPath(); g.moveTo(sh.x,sh.y);
+      g.quadraticCurveTo(sh.x+Math.cos(out)*8*DPR*this.girth*flare, sh.y+Math.sin(out)*8*DPR*this.girth*flare,
+        sh.x+Math.cos(back)*10*DPR*this.girth, sh.y+Math.sin(back)*10*DPR*this.girth);
+      g.closePath(); g.fill();
+    }
+    g.restore();
+  }
+  _w(k){ // koi width: pointed nose, broad shoulders, fat middle, narrow at the peduncle
+    const t=k/(this.n-1);
+    const bump=Math.sin(Math.pow(clamp(t,0,1),0.72)*Math.PI);   // fat, peaked forward
+    return (bump*0.92+0.13)*15.5*DPR*this.girth;
+  }
+  _outline(grow, extra){
+    const s=this.spine;
+    // right side nose→tail, then left side back
+    for(let k=0;k<this.n;k++){ const p=s[k], pr=k<this.n-1?s[k+1]:s[k-1];
+      const perp=Math.atan2(p.y-pr.y,p.x-pr.x)+ (k<this.n-1?Math.PI/2:-Math.PI/2);
+      const w=this._w(k)+grow+extra; const x=p.x+Math.cos(perp)*w, y=p.y+Math.sin(perp)*w;
+      k===0?g.moveTo(x,y):g.lineTo(x,y);
+    }
+    for(let k=this.n-1;k>=0;k--){ const p=s[k], pr=k<this.n-1?s[k+1]:s[k-1];
+      const perp=Math.atan2(p.y-pr.y,p.x-pr.x)+ (k<this.n-1?-Math.PI/2:Math.PI/2);
+      const w=this._w(k)+grow+extra; g.lineTo(p.x+Math.cos(perp)*w, p.y+Math.sin(perp)*w);
+    }
+    g.closePath();
+  }
+}
+
+// ── ripples — the surface remembers where something was ──
+class Ripple{
+  constructor(x,y,r0,strength){ this.x=x;this.y=y;this.r=r0||2*DPR;this.max=(60+rnd(0,120))*DPR*(strength||1);this.a=0.5*(strength||1);this.grow=(0.6+rnd(0,0.5))*DPR; }
+  step(dt){ this.r+=this.grow*dt*60*(reduce?0.5:1); this.a*=0.982; return this.r<this.max && this.a>0.01; }
+  draw(){ g.save(); g.globalAlpha=this.a; g.strokeStyle='#dff3ea'; g.lineWidth=1.1*DPR;
+    g.beginPath(); g.arc(this.x,this.y,this.r,0,TAU); g.stroke();
+    g.globalAlpha=this.a*0.4; g.beginPath(); g.arc(this.x,this.y,this.r*0.72,0,TAU); g.stroke(); g.restore(); }
+}
+
+// ── a dragonfly — rare, above the water, casts a small shadow. rewards watching. ──
+const DF_COLORS=['#6fcdb3','#5a9fd4','#d9a441','#8a7fd0','#7bbf6a'];   // teal, blue, gold, violet, green
+class Dragonfly{
+  constructor(opt={}){
+    const left=Math.random()<.5;
+    this.x=left?-30*DPR:W+30*DPR; this.y=rnd(H*0.12,H*0.72);
+    this.a=left?rnd(-0.5,0.5):Math.PI+rnd(-0.5,0.5);
+    this.v=0; this.t=rnd(0,TAU); this.next=0.2;
+    this.aggr=!!opt.aggressive;
+    this.col=opt.color||DF_COLORS[(Math.random()*DF_COLORS.length)|0];
+    this.sc=opt.scale||rnd(0.72,1.28);
+    this.life=rnd(13,26);                            // patrols the pond a while, then leaves
+    this.hunts = this.aggr || Math.random()<0.35;    // only some are hunters; most just patrol peacefully
+    this.fed=0; this.appetite=1+(Math.random()<0.35?1:0); this.satiated=rnd(4,12);   // arrives content — hunts rarely, then rests a long while
+  }
+  step(dt, all, prey){
+    this.t += dt*(reduce?9:24);
+    let chase=null, flee=null;                       // the bully chases; the others flee it (territorial)
+    if(this.aggr){ let nd=250*DPR; for(const o of all){ if(o===this||o.aggr) continue; const d=Math.hypot(o.x-this.x,o.y-this.y); if(d<nd){nd=d;chase=o;} } }  // defends a patch, not the whole pond
+    else { let nd=135*DPR; for(const o of all){ if(o===this||!o.aggr) continue; const d=Math.hypot(o.x-this.x,o.y-this.y); if(d<nd){nd=d;flee=o;} } }  // only bolts when it's actually close
+    if(this.satiated>0) this.satiated-=dt;           // content → just patrolling, not hunting
+    let hunt=null;                                   // only a hungry hunter goes after a mayfly, and only one that drifts near
+    if(prey && this.hunts && this.satiated<=0){ let hd=130*DPR; for(const m of prey){ const d=Math.hypot(m.x-this.x,m.y-this.y); if(d<hd){hd=d;hunt=m;} }
+      if(hunt && hd<16*DPR){ hunt.dead=true; ripples.push(new Ripple(hunt.x,hunt.y,2*DPR,.28)); hunt=null;
+        if(++this.fed>=this.appetite){ this.satiated=rnd(18,40); this.fed=0; this.appetite=1+(Math.random()<0.35?1:0); } } }   // caught one; now rests a good long while
+    this.life-=dt; const leaving=this.life<0;
+    this.next-=dt;
+    if(this.next<=0){
+      if(hunt || Math.random()<(this.aggr?0.8:0.62)){
+        let na=this.a+rnd(-1.2,1.2);
+        if(leaving) na = (this.x<W/2 ? Math.PI : 0) + rnd(-0.3,0.3);                        // time's up → head for the edge
+        else if(flee) na=ang(na, Math.atan2(this.y-flee.y,this.x-flee.x), 0.9);             // survival first — bolt from the bully
+        else if(hunt) na=ang(na, Math.atan2(hunt.y-this.y,hunt.x-this.x), 0.88);            // dart at the mayfly
+        else if(chase) na=ang(na, Math.atan2(chase.y-this.y,chase.x-this.x), 0.82);         // charge another dragonfly (territorial)
+        else if(this.x<150*DPR||this.x>W-150*DPR||this.y<150*DPR||this.y>H-150*DPR) na=ang(na, Math.atan2(H/2-this.y,W/2-this.x),0.7);  // patrol — stay over the water
+        this.a=na;
+        this.v=rnd(hunt?11:(this.aggr?9:6), hunt?16:(this.aggr?14:11))*DPR;
+        this.next=rnd(hunt?0.1:0.12, hunt?0.3:0.5);                                         // re-aim fast while chasing prey
+      } else { this.v=rnd(0,0.5)*DPR; this.next=rnd(0.2,0.75); }
+    }
+    if(flee) this.v=Math.max(this.v, 11*DPR);        // being chased → keep bolting
+    this.v*=Math.pow(0.015,dt);
+    this.a+=Math.sin(this.t*0.27)*0.03;
+    const s=(reduce?0.5:1);
+    this.x+=Math.cos(this.a)*this.v*dt*60*s; this.y+=Math.sin(this.a)*this.v*dt*60*s;
+    if(this.v>4*DPR&&Math.random()<0.05) ripples.push(new Ripple(this.x,this.y+44*DPR*this.sc,2*DPR,.18));
+    return this.x>-80*DPR&&this.x<W+80*DPR&&this.y>-80*DPR&&this.y<H+80*DPR;
+  }
+  draw(){
+    const sc=this.sc;
+    g.save();
+    g.globalAlpha=0.1; g.fillStyle='#03110c'; g.beginPath(); g.ellipse(this.x,this.y+44*DPR*sc,7*DPR*sc,3*DPR*sc,0,0,TAU); g.fill();
+    g.translate(this.x,this.y); g.rotate(this.a); g.scale(sc,sc);
+    g.globalAlpha=0.92; g.strokeStyle=this.col; g.lineWidth=1.7*DPR; g.lineCap='round';
+    g.beginPath(); g.moveTo(-5*DPR,0); g.lineTo(15*DPR,0); g.stroke();               // body
+    g.fillStyle=this.col; g.beginPath(); g.arc(15*DPR,0,2.3*DPR,0,TAU); g.fill();     // head
+    g.globalAlpha=0.2; g.fillStyle='#eaf6f0';                                        // clear wings, up near the head, counter-stroking
+    const beat=Math.sin(this.t);
+    for(const sd of [1,-1]) for(const pair of [0,1]){                                // pair 0 = fore, 1 = hind
+      const ax=pair?5:9, b=pair?-beat:beat;                                          // fore down while hind up — alternate for stability
+      const flat=0.55+0.45*(1-Math.abs(b));                                          // wing looks longest flat, short at the top/bottom of the stroke
+      g.save(); g.translate(ax*DPR,0); g.rotate(-sd*(0.12+b*0.32));                   // tilt shows the up/down beat
+      g.beginPath(); g.ellipse(0, sd*7*DPR*flat, 3*DPR, 7.5*DPR*flat, 0,0,TAU); g.fill();
+      g.restore();
+    }
+    g.restore();
+  }
+}
+
+const MAYFLY_COLS=['#f2ead0','#e9e4c8','#f5efd8','#eae0c0'];   // pale cream — delicate, upright wings, long tail threads
+class Mayfly{
+  constructor(x,y){
+    this.x=x!=null?x:rnd(W*0.2,W*0.8); this.y=y!=null?y:rnd(H*0.15,H*0.55);
+    const toC=Math.atan2(H*0.42-this.y, W*0.5-this.x);            // head into the water from wherever it starts
+    this.vx=Math.cos(toC)*2*DPR+rnd(-.4,.4)*DPR; this.vy=Math.sin(toC)*2*DPR+rnd(-.4,.4)*DPR;
+    this.a=Math.atan2(this.vy,this.vx);
+    this.t=rnd(0,TAU); this.phase=rnd(0,TAU);
+    this.sc=rnd(0.34,0.5); this.col=MAYFLY_COLS[(Math.random()*MAYFLY_COLS.length)|0];
+    this.life=rnd(14,28);
+    this.age=0; this.alpha=0; this.entering=(this.x<0||this.x>W||this.y<0||this.y>H);   // off-edge spawn → drift in before clamping
+  }
+  step(dt, all, preds){
+    this.life-=dt; if(this.dead||this.life<0) return false;
+    this.t += dt*(reduce?7:18);
+    let ax=0, ay=0;
+    // a slow aimless flutter — never a dart
+    this.phase += dt*3.0;
+    ax += Math.cos(this.phase)*0.5*DPR; ay += Math.sin(this.phase*1.3)*0.45*DPR;
+    // friends — drift toward nearby mayflies, but don't pile up
+    let cx=0,cy=0,n=0, sx=0,sy=0;
+    for(const o of all){ if(o===this) continue; const dx=o.x-this.x, dy=o.y-this.y, d=Math.hypot(dx,dy);
+      if(d<170*DPR){ cx+=o.x; cy+=o.y; n++; if(d<26*DPR&&d>0.1){ sx-=dx/d; sy-=dy/d; } } }
+    if(n){ ax += ((cx/n)-this.x)*0.011; ay += ((cy/n)-this.y)*0.011; }   // want to be near friends
+    ax += sx*1.3*DPR; ay += sy*1.3*DPR;
+    // predators — bolt from any dragonfly that's near (harder the closer it is)
+    let fleeing=false;
+    if(preds) for(const d of preds){ const dx=this.x-d.x, dy=this.y-d.y, dd=Math.hypot(dx,dy);
+      if(dd<110*DPR&&dd>0.1){ const w=1-dd/(110*DPR); ax+=dx/dd*w*10*DPR; ay+=dy/dd*w*10*DPR; fleeing=true; } }
+    // integrate + damp
+    this.vx=(this.vx+ax*dt*60*0.5)*Math.pow(0.03,dt);
+    this.vy=(this.vy+ay*dt*60*0.5)*Math.pow(0.03,dt);
+    const sp=Math.hypot(this.vx,this.vy), max=(fleeing?6.8:2.6)*DPR;
+    if(sp>max){ this.vx=this.vx/sp*max; this.vy=this.vy/sp*max; }
+    const s=(reduce?0.5:1);
+    this.x+=this.vx*dt*60*s; this.y+=this.vy*dt*60*s;
+    const m=18*DPR;                                       // stay over the water — but let a new one drift in from off-screen first
+    if(this.entering){ if(this.x>m&&this.x<W-m&&this.y>m&&this.y<H*0.82) this.entering=false; }
+    else {
+      if(this.x<m){this.x=m;this.vx=Math.abs(this.vx);} if(this.x>W-m){this.x=W-m;this.vx=-Math.abs(this.vx);}
+      if(this.y<m){this.y=m;this.vy=Math.abs(this.vy);} if(this.y>H*0.82){this.y=H*0.82;this.vy=-Math.abs(this.vy);}
+    }
+    if(sp>0.2) this.a=ang(this.a, Math.atan2(this.vy,this.vx), 0.3);   // ease the heading so the flutter stays soft
+    this.age+=dt; this.alpha=Math.min(clamp(this.age/0.8,0,1), clamp(this.life/1.8,0,1));   // fade in on arrival, fade out near the end — never a pop
+    return true;
+  }
+  draw(){
+    const sc=this.sc, A=this.alpha; g.save(); g.translate(this.x,this.y); g.rotate(this.a); g.scale(sc,sc);
+    // long delicate tail filaments — the mayfly signature
+    g.globalAlpha=0.45*A; g.strokeStyle=this.col; g.lineWidth=0.8*DPR; g.lineCap='round';
+    for(const ty of [-2,0,2]){ g.beginPath(); g.moveTo(-2*DPR,0);
+      g.quadraticCurveTo(-11*DPR, ty*DPR, -21*DPR, ty*1.7*DPR + Math.sin(this.t*0.5+ty)*2*DPR); g.stroke(); }
+    // slim body
+    g.globalAlpha=0.9*A; g.lineWidth=1.5*DPR; g.beginPath(); g.moveTo(-2*DPR,0); g.lineTo(5*DPR,0); g.stroke();
+    // upright wings, held in a shallow V, quick flutter
+    const fl=0.4+0.6*Math.abs(Math.sin(this.t));
+    g.globalAlpha=0.3*A; g.fillStyle='#f4fbf5';
+    for(const sd of [1,-1]){ g.save(); g.translate(2*DPR,0); g.rotate(-sd*(0.55+0.3*fl));
+      g.beginPath(); g.ellipse(0, sd*4*DPR*fl, 2*DPR, 6.5*DPR*fl, 0,0,TAU); g.fill(); g.restore(); }
+    g.restore();
+  }
+}
+
+const koi = Array.from({length:6},(_,i)=>new Koi(i));
+let ripples=[], dragons=[], food=[], feedMode=false, tNext=rnd(3,7);
+let mayflies=[], mNext=rnd(2,5), started2=false;
+
+// caustics — a few slow soft suns on the water; light is a character
+const suns = Array.from({length:5},()=>({x:rnd(0,1),y:rnd(0,1),r:rnd(.25,.5),p:rnd(0,TAU),s:rnd(.05,.12)}));
+
+function water(t){
+  // deep pond, sunlit at the middle, dark at the reeds (a place, not a backdrop)
+  const grd=g.createRadialGradient(W*0.5,H*0.42,0, W*0.5,H*0.5,Math.max(W,H)*0.72);
+  grd.addColorStop(0,'#16594a'); grd.addColorStop(0.5,'#0e3f36'); grd.addColorStop(1,'#071d18');
+  g.fillStyle=grd; g.fillRect(0,0,W,H);
+  // caustic light, drifting and breathing — additive, low
+  g.globalCompositeOperation='lighter';
+  for(const s of suns){
+    const x=(s.x+Math.sin(t*s.s+s.p)*0.04)*W, y=(s.y+Math.cos(t*s.s*0.8+s.p)*0.04)*H;
+    const r=Math.max(W,H)*s.r*(0.9+Math.sin(t*0.4+s.p)*0.1);
+    const rg=g.createRadialGradient(x,y,0,x,y,r);
+    rg.addColorStop(0,'rgba(120,200,170,0.10)'); rg.addColorStop(1,'rgba(120,200,170,0)');
+    g.fillStyle=rg; g.beginPath(); g.arc(x,y,r,0,TAU); g.fill();
+  }
+  g.globalCompositeOperation='source-over';
+}
+
+let last=performance.now(), started=false;
+function frame(now){
+  const dt=Math.min(0.05,(now-last)/1000); last=now; const t=now/1000;
+  water(t);
+  // deeper fish first, so nearer ones swim over them
+  const order=[...koi].sort((a,b)=>a.depth-b.depth);
+  for(const k of order){ k.step(dt,koi); }
+  for(const k of order){ k.draw(); }
+  food = food.filter(f=>{ if(f.eaten || (t*1000-f.born)>32000) return false;
+    f.dx += rnd(-0.03,0.03); f.dy += rnd(-0.03,0.03); f.dx*=0.97; f.dy*=0.97;               // each pellet drifts on its own → they spread, and sometimes clump
+    f.x += (f.dx + Math.sin(t*0.3+f.seed)*0.12)*DPR*dt*60;
+    f.y += (f.dy + Math.cos(t*0.26+f.seed)*0.10 + 0.006)*DPR*dt*60;
+    g.save(); g.globalAlpha=.9; g.fillStyle='#e6c65f'; g.beginPath(); g.arc(f.x,f.y,2.3*DPR,0,TAU); g.fill(); g.restore(); return true; });
+  ripples = ripples.filter(r=>{ const a=r.step(dt); r.draw(); return a; });
+  dragons = dragons.filter(d=>d.step(dt, dragons, mayflies));
+  mayflies = mayflies.filter(m=>m.step(dt, mayflies, dragons));
+  for(const m of mayflies) m.draw();
+  for(const d of dragons) d.draw();
+  tNext-=dt;
+  if(tNext<=0 && dragons.length<3){
+    // one territorial bully (bigger, crimson) — very likely once there are others to boss around
+    const hasBully = dragons.some(d=>d.aggr);
+    const wantBully = hasBully ? 0 : (dragons.length>=1 ? 0.8 : 0.4);
+    dragons.push(Math.random()<wantBully ? new Dragonfly({aggressive:true, color:'#cf5442', scale:rnd(1.15,1.45)}) : new Dragonfly());
+    tNext=rnd(2.5,5.5);
+  }
+  // mayflies arrive in little drifting swarms
+  mNext-=dt;
+  if(mNext<=0){
+    if(mayflies.length<15){
+      const side=(Math.random()*3)|0, c=3+((Math.random()*4)|0);   // a little swarm drifts in from an edge
+      let gx,gy;
+      if(side===0){ gx=-34*DPR; gy=rnd(H*0.18,H*0.62); }           // in from the left
+      else if(side===1){ gx=W+34*DPR; gy=rnd(H*0.18,H*0.62); }     // in from the right
+      else { gx=rnd(W*0.25,W*0.75); gy=-34*DPR; }                  // down from the top
+      for(let i=0;i<c;i++) mayflies.push(new Mayfly(gx+rnd(-26,26)*DPR, gy+rnd(-22,22)*DPR));
+    }
+    mNext=rnd(4,9);
+  }
+  // seed a swarm right away on the first frames so the pond isn't empty
+  if(!started2 && t>1.2){ started2=true; mNext=0; }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+// the feed button toggles feed mode
+const feedBtn=document.getElementById('feed');
+feedBtn.addEventListener('click', ()=>{ feedMode=!feedMode; feedBtn.classList.toggle('active',feedMode); feedBtn.setAttribute('aria-pressed',feedMode); });
+
+// touch the water — in feed mode, scatter a little food; otherwise a ripple that startles the near fish
+function touch(e){
+  const r=cv.getBoundingClientRect(); const x=((e.touches?e.touches[0].clientX:e.clientX)-r.left)*DPR, y=((e.touches?e.touches[0].clientY:e.clientY)-r.top)*DPR;
+  if(feedMode){
+    if(food.length<24){                                                       // ~6 handfuls; no spamming the whole pond
+      for(let i=0;i<4;i++) food.push({ x:x+rnd(-16,16)*DPR, y:y+rnd(-16,16)*DPR, born:performance.now(), seed:rnd(0,TAU), dx:rnd(-0.32,0.32), dy:rnd(-0.32,0.32) });   // a handful — each pellet drifts on its own
+      ripples.push(new Ripple(x,y,3*DPR,.4));
+    }
+  } else {
+    ripples.push(new Ripple(x,y,4*DPR,1));
+    for(const k of koi){ const d=Math.hypot(k.x-x,k.y-y); if(d<170*DPR){ k.startle=0.6; k.a=ang(k.a, Math.atan2(k.y-y,k.x-x), 0.6); } }
+  }
+}
+cv.addEventListener('pointerdown', touch);
+
+// the whisper arrives with the stillness, then leaves (the word comes with the thing, then goes)
+setTimeout(()=>document.getElementById('whisper').classList.add('show'), 1600);
+setTimeout(()=>document.getElementById('whisper').classList.remove('show'), 9000);
+</script>
+</body>
+</html>
