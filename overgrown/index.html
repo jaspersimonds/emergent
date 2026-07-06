@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>overgrown</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#e9efe0}
+  canvas{display:block}
+  #hint{position:fixed;left:50%;bottom:5%;transform:translateX(-50%);
+    font:14px/1.5 'Hanken Grotesk',-apple-system,system-ui,sans-serif;color:#6f7d63;
+    opacity:0;transition:opacity 1s ease;pointer-events:none;text-shadow:0 1px 8px rgba(255,255,255,.6)}
+  #hint.show{opacity:.7}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hint">a breeze follows you — get close to the ladybug and watch</div>
+<script>
+(() => {
+  const cv=document.getElementById('c'), x=cv.getContext('2d'), hint=document.getElementById('hint');
+  const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let W,H,DPR,S;                         // S = scale unit (min dimension)
+  function size(){ DPR=Math.min(2,devicePixelRatio||1);
+    const iw=innerWidth||document.documentElement.clientWidth||1280;
+    const ih=innerHeight||document.documentElement.clientHeight||800;
+    W=cv.width=iw*DPR; H=cv.height=ih*DPR; cv.style.width=iw+'px'; cv.style.height=ih+'px'; S=Math.min(W,H); }
+  size(); addEventListener('resize',()=>{size();layout();},{passive:true});
+  // re-size when real dimensions arrive (some contexts report 0 on first paint)
+  setTimeout(()=>{size();layout();},200); setTimeout(()=>{size();layout();},900);
+
+  // seeded rng — continuous identity, not per-frame static (two-notes)
+  let seed=20260705; const rnd=()=>(seed=(seed*1103515245+12345)&0x7fffffff)/0x7fffffff;
+  const rr=(a,b)=>a+rnd()*(b-a);
+  const lerp=(a,b,t)=>a+(b-a)*t, clamp=(v,a,b)=>v<a?a:v>b?b:v;
+  const TAU=Math.PI*2;
+
+  // ── the greenhouse palette (Career Seed) ─────────────────────────────────────
+  const CARD='#fbfcf7', CARDEDGE='#e3e9d7', SHADOW='rgba(60,80,45,.16)';
+  const GREENS=['#3f7d2b','#4f9a3a','#356029','#5aa347','#2f6b25'];
+  const BLOOMS=['#f4f1ea','#f6c9d6','#f3d55f','#d9c4f0','#f0a35a'];
+
+  // ── ONE wind, the whole world reads it (space is a character) ───────────────
+  let gust=0, gustT=0;
+  function wind(t){ return Math.sin(t*0.9)*0.6 + Math.sin(t*0.37+1.3)*0.4 + gust; }
+
+  // ── the cards ────────────────────────────────────────────────────────────────
+  let boxes=[], plants=[], ants=[], bug=null, flutter=null, spores=[];
+  function roundRect(px,py,w,h,r){ x.beginPath();
+    x.moveTo(px+r,py); x.arcTo(px+w,py,px+w,py+h,r); x.arcTo(px+w,py+h,px,py+h,r);
+    x.arcTo(px,py+h,px,py,r); x.arcTo(px,py,px+w,py,r); x.closePath(); }
+
+  function layout(){
+    seed=20260705; boxes=[]; plants=[];
+    // two-three cards, staggered like a little shelf
+    const specs = W>H*1.15
+      ? [[0.14,0.30,0.34,0.40],[0.54,0.42,0.34,0.40]]
+      : [[0.13,0.20,0.72,0.30],[0.20,0.56,0.66,0.30]];
+    for(const [rx,ry,rw,rh] of specs) boxes.push({x:rx*W,y:ry*H,w:rw*W,h:rh*H,r:0.028*S});
+
+    // grow plant clusters along the TOP edge (and a few spilling over corners) of each card
+    for(const b of boxes){
+      const n = Math.round(b.w/(0.05*S));
+      for(let i=0;i<n;i++){
+        const t=(i+0.5)/n, px=b.x + t*b.w + rr(-6,6)*DPR;
+        // cluster weighting: ferns/grass common, flowers/mushrooms rarer (rarity is a feature)
+        const roll=rnd(); let type = roll<0.34?'grass' : roll<0.62?'fern' : roll<0.80?'flower' : roll<0.92?'mush' : 'clover';
+        plants.push(makePlant(type, px, b.y, S));
+      }
+      // a couple hanging over the front edge
+      for(let k=0;k<3;k++){ plants.push(makePlant(rnd()<0.5?'grass':'clover', b.x+rr(0.1,0.9)*b.w, b.y+b.h, S, true)); }
+    }
+    plants.sort((a,b)=>a.y-b.y);   // painter's order: back first
+
+    // the ant trail — a leader + followers, each reading the one ahead (centipede lesson).
+    // init the whole line ON the lower card's lower edge so it marches as one from frame 1.
+    ants=[]; const tCard=boxes[boxes.length-1]; const sy=tCard.y+tCard.h+7*DPR;
+    for(let i=0;i<9;i++) ants.push({x:tCard.x+tCard.w*0.55 - i*11*DPR, y:sy, px:0,py:0, legPh:rnd()*TAU, carry:i===0});
+    antLead={x:tCard.x+tCard.w*0.55, y:sy, a:Math.PI, tt:0, hist:[]};
+    for(let k=0;k<160;k++) antLead.hist.push({x:antLead.x + k*0.9*DPR, y:sy}); // pre-seed a path so they spread instantly
+
+    // the ladybug — starts walking on a card
+    bug=makeLadybug(boxes[boxes.length-1]);
+    // a butterfly, drifting
+    flutter={x:W*0.5,y:H*0.2,vx:0,vy:0,ph:rnd()*TAU,state:'drift',timer:rr(3,7),tx:0,ty:0,wing:0};
+  }
+
+  // ── PLANTS ───────────────────────────────────────────────────────────────────
+  function makePlant(type,px,py,s,hang){
+    const p={type,x:px,y:py,ph:rnd()*TAU,seed:rnd()*1000,hang:!!hang};
+    if(type==='grass'){ p.h=rr(0.05,0.11)*s; p.blades=[]; const nb=3+(rnd()*4|0);
+      for(let i=0;i<nb;i++) p.blades.push({a:rr(-0.5,0.5),h:rr(0.6,1),c:GREENS[rnd()*GREENS.length|0]}); }
+    else if(type==='fern'){ p.h=rr(0.07,0.13)*s; p.lean=rr(-0.3,0.3); p.pairs=5+(rnd()*3|0); p.c=GREENS[rnd()*GREENS.length|0]; p.flip=rnd()<0.5?1:-1; }
+    else if(type==='flower'){ p.h=rr(0.06,0.11)*s; p.lean=rr(-0.2,0.2); p.petals=5+(rnd()*3|0); p.c=BLOOMS[rnd()*BLOOMS.length|0]; p.core='#e0a92e'; p.open=0; }
+    else if(type==='mush'){ p.caps=[]; const nc=1+(rnd()*3|0); for(let i=0;i<nc;i++) p.caps.push({dx:rr(-0.02,0.02)*s, hh:rr(0.02,0.045)*s, cw:rr(0.02,0.036)*s, tilt:rr(-0.2,0.2)}); p.spore=0; }
+    else { p.h=rr(0.03,0.055)*s; p.leaves=3+(rnd()*2|0); p.c=GREENS[rnd()*GREENS.length|0]; }  // clover
+    return p;
+  }
+  function drawStalk(x0,y0,x1,y1,w0,w1,col){ x.beginPath(); const dx=(y1-y0)?(x1-x0):0;
+    x.moveTo(x0-w0,y0); x.quadraticCurveTo((x0+x1)/2-w1*0.5+dx*0.1,(y0+y1)/2, x1-w1,y1);
+    x.lineTo(x1+w1,y1); x.quadraticCurveTo((x0+x1)/2+w1*0.5+dx*0.1,(y0+y1)/2, x0+w0,y0);
+    x.closePath(); x.fillStyle=col; x.fill(); }
+
+  function drawPlant(p,t){
+    const bendBase = wind(t + p.ph*0.5) ;
+    x.save(); x.translate(p.x,p.y);
+    if(p.type==='mush'){
+      for(const c of p.caps){ const sw=bendBase*0.02*S*0.4;
+        // stem
+        x.beginPath(); x.moveTo(c.dx-c.cw*0.28, 0); x.quadraticCurveTo(c.dx+sw*0.5,-c.hh*0.6, c.dx+sw-c.cw*0.16,-c.hh);
+        x.lineTo(c.dx+sw+c.cw*0.16,-c.hh); x.quadraticCurveTo(c.dx+sw*0.5,-c.hh*0.6, c.dx+c.cw*0.28,0); x.closePath();
+        x.fillStyle='#f0ece0'; x.fill();
+        // cap
+        x.save(); x.translate(c.dx+sw,-c.hh); x.rotate(c.tilt+bendBase*0.05);
+        x.beginPath(); x.ellipse(0,0,c.cw,c.cw*0.72,0,Math.PI,TAU); x.fillStyle='#c9402b'; x.fill();
+        x.beginPath(); x.ellipse(0,0,c.cw,c.cw*0.2,0,Math.PI,TAU); x.fillStyle='#a8331f'; x.fill();
+        for(let s=0;s<3;s++){ x.beginPath(); x.arc(rr(-c.cw*0.6,c.cw*0.6),-c.cw*0.3,c.cw*0.12,0,TAU); x.fillStyle='rgba(255,255,255,.85)'; x.fill(); }
+        x.restore();
+      }
+      if(p.spore>0){ for(let i=0;i<5;i++){ x.beginPath(); x.arc(rr(-8,8)*DPR, -30*DPR - p.spore*30*DPR + rr(-6,6)*DPR, 1.4*DPR,0,TAU); x.fillStyle=`rgba(240,240,220,${p.spore*0.4})`; x.fill(); } p.spore-=0.01; }
+      x.restore(); return;
+    }
+    const bend = bendBase * (p.hang?1.6:1);
+    if(p.type==='grass'){
+      for(const bl of p.blades){ const h=p.h*bl.h, tipx=Math.sin(bl.a)*h*0.5 + bend*h*0.5*(p.hang?-1:1), tipy=(p.hang?h:-h);
+        x.beginPath(); x.moveTo(-1.6*DPR,0); x.quadraticCurveTo(tipx*0.4, tipy*0.55, tipx, tipy);
+        x.quadraticCurveTo(tipx*0.4+1.6*DPR, tipy*0.55, 1.6*DPR,0); x.closePath(); x.fillStyle=bl.c; x.fill(); }
+    } else if(p.type==='clover'){
+      const h=p.h, tx=bend*h*0.5, ty=-h;
+      drawStalk(0,0,tx,ty,1.4*DPR,1*DPR,'#4f8a34');
+      for(let i=0;i<p.leaves;i++){ const a=(i/p.leaves)*TAU + t*0.2; x.beginPath();
+        x.ellipse(tx+Math.cos(a)*4*DPR, ty+Math.sin(a)*4*DPR, 3.4*DPR,4.6*DPR,a,0,TAU); x.fillStyle=p.c; x.fill(); }
+    } else if(p.type==='fern'){
+      const h=p.h, tipx=(p.lean+bend)*h*0.6, tipy=-h;
+      // rachis
+      x.strokeStyle='#3f7d2b'; x.lineWidth=1.8*DPR; x.beginPath(); x.moveTo(0,0);
+      x.quadraticCurveTo(tipx*0.4,-h*0.55, tipx,tipy); x.stroke();
+      for(let i=0;i<p.pairs;i++){ const u=(i+0.5)/p.pairs, hh=h*u, bx=lerp(0,tipx,u*u), by=-hh;
+        const len=(1-u)*h*0.34*p.flip, ang=-0.5 - u*0.5 + bend*0.2;
+        for(const s of [1,-1]){ x.save(); x.translate(bx,by); x.rotate(ang*s*p.flip);
+          x.beginPath(); x.moveTo(0,0); x.quadraticCurveTo(len*0.5*s,-2*DPR, len*s, 0); x.quadraticCurveTo(len*0.5*s,2*DPR,0,0);
+          x.fillStyle=p.c; x.fill(); x.restore(); } }
+      // fiddlehead curl at tip
+      x.save(); x.translate(tipx,tipy); x.strokeStyle='#4f9a3a'; x.lineWidth=1.6*DPR;
+      x.beginPath(); x.arc(0,0,3*DPR,-0.5,3.5); x.stroke(); x.restore();
+    } else if(p.type==='flower'){
+      const h=p.h, tx=(p.lean+bend)*h*0.55, ty=-h;
+      drawStalk(0,0,tx,ty,1.6*DPR,1.2*DPR,'#4f8a34');
+      // a leaf on the stem
+      x.save(); x.translate(tx*0.4,-h*0.45); x.rotate(0.6+bend*0.2); x.beginPath();
+      x.ellipse(4*DPR,0,5*DPR,2.4*DPR,0,0,TAU); x.fillStyle='#4f9a3a'; x.fill(); x.restore();
+      x.save(); x.translate(tx,ty);
+      const pr=5.6*DPR*(0.8+p.open*0.3);
+      for(let i=0;i<p.petals;i++){ const a=(i/p.petals)*TAU + p.seed; x.beginPath();
+        x.ellipse(Math.cos(a)*pr*0.5,Math.sin(a)*pr*0.5, pr*0.42,pr*0.68,a,0,TAU); x.fillStyle=p.c; x.fill(); }
+      x.beginPath(); x.arc(0,0,pr*0.34,0,TAU); x.fillStyle=p.core; x.fill(); x.restore();
+    }
+    x.restore();
+  }
+
+  // ── LADYBUG — a real little state machine (behavior-first) ──────────────────
+  function makeLadybug(b){ return {x:b.x+b.w*0.5,y:b.y,a:rr(0,TAU),state:'walk',timer:rr(2,5),
+    tx:0,ty:0,shell:0,wing:0,vx:0,vy:0,legPh:0,startled:0,box:b}; }
+  function stepBug(dt,t){
+    const g=bug; g.legPh+=dt*14;
+    if(g.state==='walk'){
+      g.a += Math.sin(t*0.7+g.x*0.01)*dt*0.9;
+      const sp=26*DPR*dt; g.x+=Math.cos(g.a)*sp; g.y+=Math.sin(g.a)*sp*0.5;
+      // stay near its card top
+      const b=g.box; if(g.x<b.x+10*DPR||g.x>b.x+b.w-10*DPR) g.a=Math.PI-g.a;
+      g.y=lerp(g.y,b.y-2*DPR,0.06);
+      g.timer-=dt; if(g.timer<0){ g.state='open'; g.timer=0.9; }        // decides to fly — the pause
+      if(g.startled>0){ g.state='open'; g.timer=0.35; g.startled=0; }
+    } else if(g.state==='open'){                                         // elytra split, wings unfurl (anticipation)
+      g.shell=clamp(g.shell+dt*3,0,1); g.wing=clamp(g.wing+dt*3,0,1);
+      g.timer-=dt; if(g.timer<0 && g.shell>=1){ g.state='fly'; g.timer=rr(3,6);
+        g.tx=rr(0.2,0.8)*W; g.ty=rr(0.15,0.7)*H; }
+    } else if(g.state==='fly'){
+      const dx=g.tx-g.x, dy=g.ty-g.y, d=Math.hypot(dx,dy)||1;
+      g.vx=lerp(g.vx,(dx/d)*60*DPR + Math.cos(t*9)*20*DPR,0.06);
+      g.vy=lerp(g.vy,(dy/d)*60*DPR + Math.sin(t*11)*20*DPR,0.06);       // buzzy wobble
+      g.x+=g.vx*dt; g.y+=g.vy*dt; g.a=Math.atan2(g.vy,g.vx); g.wing=1;
+      g.timer-=dt; if(d<24*DPR || g.timer<0){ g.state='land'; }
+    } else if(g.state==='land'){
+      g.vx*=0.86; g.vy*=0.86; g.x+=g.vx*dt; g.y+=g.vy*dt;
+      g.wing=clamp(g.wing-dt*2.5,0,1); g.shell=clamp(g.shell-dt*2.5,0,1);
+      if(g.wing<=0){ g.state='walk'; g.timer=rr(3,6);
+        // adopt whichever card it's nearest
+        g.box=boxes.reduce((m,b)=>Math.abs(b.x+b.w/2-g.x)<Math.abs(m.x+m.w/2-g.x)?b:m,boxes[0]); }
+    }
+  }
+  function drawBug(){
+    const g=bug; x.save(); x.translate(g.x,g.y); x.rotate(g.a+Math.PI/2);
+    const R=7*DPR, flying=(g.state==='fly'||g.state==='open'||g.state==='land');
+    // shadow when on the ground
+    if(!flying||g.shell<0.4){ x.beginPath(); x.ellipse(0,3*DPR,R*0.9,R*0.5,0,0,TAU); x.fillStyle='rgba(40,60,30,.18)'; x.fill(); }
+    // legs (little scuttle)
+    if(!flying){ x.strokeStyle='#241a12'; x.lineWidth=1.3*DPR;
+      for(let s of[-1,1]) for(let i=0;i<3;i++){ const ph=g.legPh+i*2+ (s>0?3:0); x.beginPath();
+        x.moveTo(s*R*0.5, -R*0.4+i*R*0.4); x.lineTo(s*(R*1.1+Math.sin(ph)*1.5*DPR), -R*0.4+i*R*0.4+Math.cos(ph)*1.5*DPR); x.stroke(); } }
+    // wings (buzzing) when open
+    if(g.wing>0){ x.save(); x.globalAlpha=0.5*g.wing; const wb=flying?Math.sin(performance.now()*0.06):0;
+      for(let s of[-1,1]){ x.beginPath(); x.ellipse(s*R*0.7, R*0.2, R*0.7,R*1.25*(0.7+0.3*Math.abs(wb)),s*0.3,0,TAU); x.fillStyle='rgba(210,225,235,.7)'; x.fill(); } x.restore(); }
+    // body: head
+    x.beginPath(); x.arc(0,-R*0.7,R*0.55,0,TAU); x.fillStyle='#20160f'; x.fill();
+    // antennae
+    x.strokeStyle='#20160f'; x.lineWidth=1*DPR; for(let s of[-1,1]){ x.beginPath(); x.moveTo(s*R*0.25,-R*0.9); x.lineTo(s*R*0.5,-R*1.4); x.stroke(); }
+    // elytra (red shell) — splits open by g.shell
+    const split=g.shell*R*0.9;
+    for(let s of[-1,1]){ x.save(); x.translate(s*split,0); x.rotate(s*g.shell*0.5);
+      x.beginPath(); x.ellipse(s*R*0.02,0,R*0.62,R,0,0,TAU); x.fillStyle='#d23b2a'; x.fill();
+      // spots
+      x.fillStyle='#20160f'; for(const sp of [[0.28,-0.35],[0.34,0.2],[0.12,0.55]]){ x.beginPath(); x.arc(s*sp[0]*R,sp[1]*R,R*0.13,0,TAU); x.fill(); }
+      x.restore(); }
+    // the seam line
+    if(g.shell<0.2){ x.strokeStyle='#20160f'; x.lineWidth=1*DPR; x.beginPath(); x.moveTo(0,-R*0.5); x.lineTo(0,R*0.8); x.stroke(); }
+    x.restore();
+  }
+
+  // ── ANTS — the trail: each reads the one ahead (emergent line) ──────────────
+  let antLead;
+  function stepAnts(dt,t){
+    const b0=boxes[0]; antLead.tt-=dt;
+    if(antLead.tt<0){ antLead.tt=rr(1.4,3); antLead.a += rr(-1,1); }
+    antLead.a += Math.sin(t*0.5)*dt;
+    const sp=30*DPR*dt; antLead.x+=Math.cos(antLead.a)*sp; antLead.y+=Math.sin(antLead.a)*sp*0.6;
+    // keep the trail loosely on/near the lower card
+    const b=boxes[boxes.length-1]; const cx=b.x+b.w*0.5, cy=b.y+b.h+6*DPR;
+    antLead.x=lerp(antLead.x,clamp(antLead.x,b.x,b.x+b.w),0.02); antLead.y=lerp(antLead.y,cy,0.03);
+    if(antLead.x<b.x+8*DPR||antLead.x>b.x+b.w-8*DPR) antLead.a=Math.PI-antLead.a;
+    antLead.hist.unshift({x:antLead.x,y:antLead.y}); if(antLead.hist.length>200) antLead.hist.pop();
+    // each ant sits at a spaced point back along the leader's path
+    for(let i=0;i<ants.length;i++){ const idx=Math.min(antLead.hist.length-1,(i+1)*16);
+      const target=antLead.hist[idx]||antLead; ants[i].px=ants[i].x; ants[i].py=ants[i].y;
+      ants[i].x=lerp(ants[i].x,target.x,0.3); ants[i].y=lerp(ants[i].y,target.y,0.3); ants[i].legPh+=dt*16; }
+  }
+  function drawAnts(){
+    for(let i=ants.length-1;i>=0;i--){ const a=ants[i], ang=Math.atan2(a.y-(a.py??a.y),a.x-(a.px??a.x));
+      x.save(); x.translate(a.x,a.y); x.rotate(ang);
+      x.strokeStyle='#3a2b1e'; x.lineWidth=0.9*DPR;
+      for(let s of[-1,1]) for(let j=0;j<3;j++){ const ph=a.legPh+j*2+(s>0?3:0); x.beginPath();
+        x.moveTo(0,0); x.lineTo(s*(3.2*DPR)+Math.cos(ph)*1.2*DPR, s*2.4*DPR+Math.sin(ph)*1*DPR); x.stroke(); }
+      x.fillStyle='#241a12';
+      x.beginPath(); x.arc(2.6*DPR,0,1.6*DPR,0,TAU); x.fill();      // head
+      x.beginPath(); x.arc(0,0,1.5*DPR,0,TAU); x.fill();            // thorax
+      x.beginPath(); x.ellipse(-3*DPR,0,2.4*DPR,1.9*DPR,0,0,TAU); x.fill(); // gaster
+      x.strokeStyle='#241a12'; x.lineWidth=0.8*DPR; for(let s of[-1,1]){ x.beginPath(); x.moveTo(3.4*DPR,0); x.lineTo(4.8*DPR,s*1.6*DPR); x.stroke(); }
+      if(a.carry){ x.beginPath(); x.ellipse(5.6*DPR,0,3*DPR,1.6*DPR,0.4,0,TAU); x.fillStyle='#6aa83e'; x.fill(); } // a leaf
+      x.restore(); }
+  }
+
+  // ── BUTTERFLY + drifting spores (anything else) ──────────────────────────────
+  function stepFlutter(dt,t){ const f=flutter; f.wing+=dt*11; f.timer-=dt;
+    if(f.state==='drift'){ f.vx=lerp(f.vx, Math.cos(t*1.7)*40*DPR + wind(t)*20*DPR,0.05); f.vy=lerp(f.vy, Math.sin(t*2.3)*30*DPR -6*DPR,0.05);
+      f.x+=f.vx*dt; f.y+=f.vy*dt;
+      if(f.x<0)f.x=W; if(f.x>W)f.x=0; f.y=clamp(f.y,H*0.08,H*0.8);
+      if(f.timer<0){ const fl=plants.filter(p=>p.type==='flower'); if(fl.length){ const g=fl[rnd()*fl.length|0]; f.tx=g.x; f.ty=g.y-g.h; f.state='to'; } else f.timer=4; } }
+    else if(f.state==='to'){ const dx=f.tx-f.x,dy=f.ty-f.y,d=Math.hypot(dx,dy)||1;
+      f.x+=dx/d*46*DPR*dt + Math.cos(t*10)*8*DPR*dt; f.y+=dy/d*46*DPR*dt;
+      if(d<10*DPR){ f.state='sip'; f.timer=rr(2,4); } }
+    else { f.timer-=dt; if(f.timer<0){ f.state='drift'; f.timer=rr(3,6); } }
+  }
+  function drawFlutter(){ const f=flutter, open=f.state==='sip'? (0.4+0.5*Math.abs(Math.sin(f.wing*0.4))) : (0.5+0.5*Math.abs(Math.sin(f.wing)));
+    x.save(); x.translate(f.x,f.y); const ang=f.state==='drift'||f.state==='to'?Math.atan2(f.vy||1,f.vx||1)*0.2:0; x.rotate(ang);
+    for(let s of[-1,1]){ x.save(); x.scale(s*open,1);
+      x.beginPath(); x.ellipse(5*DPR,-2*DPR,5.5*DPR,7*DPR,0.3,0,TAU); x.fillStyle='#e58a3c'; x.fill();
+      x.beginPath(); x.ellipse(5*DPR,5*DPR,4*DPR,4.5*DPR,-0.2,0,TAU); x.fillStyle='#d97328'; x.fill();
+      x.beginPath(); x.ellipse(6*DPR,-2*DPR,1.6*DPR,2*DPR,0.3,0,TAU); x.fillStyle='rgba(40,30,20,.5)'; x.fill(); x.restore(); }
+    x.beginPath(); x.ellipse(0,1*DPR,1.3*DPR,5*DPR,0,0,TAU); x.fillStyle='#2a2018'; x.fill();
+    x.restore();
+  }
+
+  // ── interaction: a breeze follows the cursor; near the bug → it startles ─────
+  let mx=-999,my=-999,mdown=0;
+  addEventListener('pointermove',e=>{ mx=e.clientX*DPR; my=e.clientY*DPR;
+    if(bug&&bug.state==='walk'&&Math.hypot(bug.x-mx,bug.y-my)<60*DPR) bug.startled=1;
+    hint.classList.remove('show'); },{passive:true});
+  addEventListener('pointerdown',e=>{ gust=1.8; mdown=1;
+    // tap a mushroom cluster → it puffs spores
+    const cx=e.clientX*DPR, cy=e.clientY*DPR;
+    for(const p of plants) if(p.type==='mush'&&Math.hypot(p.x-cx,p.y-cy)<40*DPR) p.spore=1; },{passive:true});
+  setTimeout(()=>hint.classList.add('show'),2600);
+
+  layout();
+  let last=performance.now(), running=true;
+  function frame(now){ if(!running)return; const dt=Math.min(0.05,(now-last)/1000); last=now; const t=now/1000;
+    gust*=0.94;
+    // cursor breeze: local push handled in draw via proximity; here just decay
+    x.clearRect(0,0,W,H);
+    // soft greenhouse ground wash
+    const bg=x.createLinearGradient(0,0,0,H); bg.addColorStop(0,'#eef3e5'); bg.addColorStop(1,'#dfe8cf');
+    x.fillStyle=bg; x.fillRect(0,0,W,H);
+
+    // cards (soft shadow, cream, subtle inner light)
+    for(const b of boxes){ x.save(); x.shadowColor=SHADOW; x.shadowBlur=22*DPR; x.shadowOffsetY=10*DPR;
+      roundRect(b.x,b.y,b.w,b.h,b.r); x.fillStyle=CARD; x.fill(); x.restore();
+      roundRect(b.x,b.y,b.w,b.h,b.r); x.strokeStyle=CARDEDGE; x.lineWidth=1*DPR; x.stroke();
+      // a faint line of text-suggestion, like a card
+      x.fillStyle='rgba(120,140,105,.12)'; for(let i=0;i<3;i++){ roundRect(b.x+b.w*0.1,b.y+b.h*0.3+i*b.h*0.18,b.w*(0.7-i*0.15),4*DPR,2*DPR); x.fill(); } }
+
+    // plants (back-to-front), with a cursor-breeze nudge baked into wind proximity
+    for(const p of plants){
+      // local breeze from cursor — plants bend away (responsibility/consequence)
+      const d=Math.hypot(p.x-mx,p.y-my); if(d<80*DPR){ const push=(80*DPR-d)/(80*DPR); p.ph += Math.sign(p.x-mx)*push*0.06; }
+      drawPlant(p,t);
+    }
+    // creatures
+    stepAnts(dt,t); drawAnts();
+    stepBug(dt,t); drawBug();
+    stepFlutter(dt,t); drawFlutter();
+
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+  document.addEventListener('visibilitychange',()=>{ running=!document.hidden; if(running){last=performance.now();requestAnimationFrame(frame);} });
+})();
+</script>
+</body>
+</html>
