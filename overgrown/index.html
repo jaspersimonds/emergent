@@ -58,26 +58,33 @@
       : [[0.13,0.20,0.72,0.30],[0.20,0.56,0.66,0.30]];
     for(const [rx,ry,rw,rh] of specs) boxes.push({x:rx*W,y:ry*H,w:rw*W,h:rh*H,r:0.028*S});
 
-    // grow plant clusters along the TOP edge (and a few spilling over corners) of each card
+    // plants grow in little CLUMPS along the top edge — clusters with gaps, not an even fringe.
+    // each clump leans toward one or two types (a patch of grass, a stand of ferns) for realism.
     for(const b of boxes){
-      const n = Math.round(b.w/(0.05*S));
-      for(let i=0;i<n;i++){
-        const t=(i+0.5)/n, px=b.x + t*b.w + rr(-6,6)*DPR;
-        // cluster weighting: ferns/grass common, flowers/mushrooms rarer (rarity is a feature)
-        const roll=rnd(); let type = roll<0.34?'grass' : roll<0.62?'fern' : roll<0.80?'flower' : roll<0.92?'mush' : 'clover';
-        plants.push(makePlant(type, px, b.y, S));
+      const nC = Math.max(2, Math.round(b.w/(0.17*S)));
+      for(let ci=0; ci<nC; ci++){
+        const cx = b.x + b.w*((ci+0.5)/nC) + rr(-0.055,0.055)*b.w;   // clump center, jittered
+        const gN = 2 + (rnd()*4|0);
+        const favor = rnd();                                          // this clump's dominant type
+        for(let j=0;j<gN;j++){
+          const px = cx + rr(-0.03,0.03)*S;
+          let roll=rnd()*0.7 + favor*0.3;                             // pull toward the clump's favorite
+          const type = roll<0.34?'grass' : roll<0.60?'fern' : roll<0.78?'flower' : roll<0.90?'mush' : 'clover';
+          plants.push(makePlant(type, px, b.y, S));
+        }
       }
-      // a couple hanging over the front edge
-      for(let k=0;k<3;k++){ plants.push(makePlant(rnd()<0.5?'grass':'clover', b.x+rr(0.1,0.9)*b.w, b.y+b.h, S, true)); }
+      for(let k=0;k<3;k++){ plants.push(makePlant(rnd()<0.5?'grass':'clover', b.x+rr(0.12,0.88)*b.w, b.y+b.h, S, true)); }
     }
     plants.sort((a,b)=>a.y-b.y);   // painter's order: back first
 
     // the ant trail — a leader + followers, each reading the one ahead (centipede lesson).
     // init the whole line ON the lower card's lower edge so it marches as one from frame 1.
     ants=[]; const tCard=boxes[boxes.length-1]; const sy=tCard.y+tCard.h+7*DPR;
-    for(let i=0;i<9;i++) ants.push({x:tCard.x+tCard.w*0.55 - i*11*DPR, y:sy, px:0,py:0, legPh:rnd()*TAU, carry:i===0});
-    antLead={x:tCard.x+tCard.w*0.55, y:sy, a:Math.PI, tt:0, hist:[]};
-    for(let k=0;k<160;k++) antLead.hist.push({x:antLead.x + k*0.9*DPR, y:sy}); // pre-seed a path so they spread instantly
+    // fewer ants, spaced out, each an INDIVIDUAL: its own gap, catch-up speed, side-weave, and size
+    for(let i=0;i<7;i++) ants.push({x:tCard.x+tCard.w*0.6 - i*20*DPR, y:sy, px:0,py:0, legPh:rnd()*TAU,
+      gap:(i+1)*26 + rr(-6,6), follow:rr(0.12,0.22), wob:rnd()*TAU, wobA:rr(0.7,1.6)*DPR, sc:rr(0.85,1.15), carry:i===0});
+    antLead={x:tCard.x+tCard.w*0.6, y:sy, a:Math.PI, tt:0, hist:[]};
+    for(let k=0;k<300;k++) antLead.hist.push({x:antLead.x + k*0.9*DPR, y:sy}); // pre-seed a path so they spread instantly
 
     // the ladybug — starts walking on a card
     bug=makeLadybug(boxes[boxes.length-1]);
@@ -92,7 +99,11 @@
       for(let i=0;i<nb;i++) p.blades.push({a:rr(-0.5,0.5),h:rr(0.6,1),c:GREENS[rnd()*GREENS.length|0]}); }
     else if(type==='fern'){ p.h=rr(0.07,0.13)*s; p.lean=rr(-0.3,0.3); p.pairs=5+(rnd()*3|0); p.c=GREENS[rnd()*GREENS.length|0]; p.flip=rnd()<0.5?1:-1; }
     else if(type==='flower'){ p.h=rr(0.06,0.11)*s; p.lean=rr(-0.2,0.2); p.petals=5+(rnd()*3|0); p.c=BLOOMS[rnd()*BLOOMS.length|0]; p.core='#e0a92e'; p.open=0; }
-    else if(type==='mush'){ p.caps=[]; const nc=1+(rnd()*3|0); for(let i=0;i<nc;i++) p.caps.push({dx:rr(-0.02,0.02)*s, hh:rr(0.02,0.045)*s, cw:rr(0.02,0.036)*s, tilt:rr(-0.2,0.2)}); p.spore=0; }
+    else if(type==='mush'){ p.caps=[]; const nc=1+(rnd()*3|0);
+      for(let i=0;i<nc;i++){ const cw=rr(0.02,0.036)*s; const spots=[]; const ns=2+(rnd()*3|0);   // spots FIXED at birth (seeded identity — no per-frame flicker)
+        for(let k=0;k<ns;k++) spots.push({sx:rr(-0.6,0.6)*cw, sy:rr(-0.48,-0.06)*cw, sr:cw*rr(0.1,0.17)});
+        p.caps.push({dx:rr(-0.02,0.02)*s, hh:rr(0.02,0.045)*s, cw, tilt:rr(-0.2,0.2), spots}); }
+      p.spore=0; }
     else { p.h=rr(0.03,0.055)*s; p.leaves=3+(rnd()*2|0); p.c=GREENS[rnd()*GREENS.length|0]; }  // clover
     return p;
   }
@@ -114,7 +125,7 @@
         x.save(); x.translate(c.dx+sw,-c.hh); x.rotate(c.tilt+bendBase*0.05);
         x.beginPath(); x.ellipse(0,0,c.cw,c.cw*0.72,0,Math.PI,TAU); x.fillStyle='#c9402b'; x.fill();
         x.beginPath(); x.ellipse(0,0,c.cw,c.cw*0.2,0,Math.PI,TAU); x.fillStyle='#a8331f'; x.fill();
-        for(let s=0;s<3;s++){ x.beginPath(); x.arc(rr(-c.cw*0.6,c.cw*0.6),-c.cw*0.3,c.cw*0.12,0,TAU); x.fillStyle='rgba(255,255,255,.85)'; x.fill(); }
+        for(const sp of c.spots){ x.beginPath(); x.arc(sp.sx, sp.sy, sp.sr,0,TAU); x.fillStyle='rgba(255,255,255,.88)'; x.fill(); }
         x.restore();
       }
       if(p.spore>0){ for(let i=0;i<5;i++){ x.beginPath(); x.arc(rr(-8,8)*DPR, -30*DPR - p.spore*30*DPR + rr(-6,6)*DPR, 1.4*DPR,0,TAU); x.fillStyle=`rgba(240,240,220,${p.spore*0.4})`; x.fill(); } p.spore-=0.01; }
@@ -159,34 +170,43 @@
   }
 
   // ── LADYBUG — a real little state machine (behavior-first) ──────────────────
-  function makeLadybug(b){ return {x:b.x+b.w*0.5,y:b.y,a:rr(0,TAU),state:'walk',timer:rr(2,5),
-    tx:0,ty:0,shell:0,wing:0,vx:0,vy:0,legPh:0,startled:0,box:b}; }
+  function makeLadybug(b){ return {x:b.x+b.w*0.5,y:b.y-3*DPR,a:rr(0,TAU),state:'walk',timer:rr(3,6),
+    tx:0,ty:0,shell:0,wing:0,vx:0,vy:0,spd:0,turn:0,turnT:0,settleT:0,seed:rnd()*10,legPh:0,startled:0,box:b}; }
   function stepBug(dt,t){
-    const g=bug; g.legPh+=dt*14;
+    const g=bug;
     if(g.state==='walk'){
-      g.a += Math.sin(t*0.7+g.x*0.01)*dt*0.9;
-      const sp=26*DPR*dt; g.x+=Math.cos(g.a)*sp; g.y+=Math.sin(g.a)*sp*0.5;
-      // stay near its card top
-      const b=g.box; if(g.x<b.x+10*DPR||g.x>b.x+b.w-10*DPR) g.a=Math.PI-g.a;
-      g.y=lerp(g.y,b.y-2*DPR,0.06);
-      g.timer-=dt; if(g.timer<0){ g.state='open'; g.timer=0.9; }        // decides to fly — the pause
-      if(g.startled>0){ g.state='open'; g.timer=0.35; g.startled=0; }
-    } else if(g.state==='open'){                                         // elytra split, wings unfurl (anticipation)
-      g.shell=clamp(g.shell+dt*3,0,1); g.wing=clamp(g.wing+dt*3,0,1);
-      g.timer-=dt; if(g.timer<0 && g.shell>=1){ g.state='fly'; g.timer=rr(3,6);
-        g.tx=rr(0.2,0.8)*W; g.ty=rr(0.15,0.7)*H; }
+      g.spd = lerp(g.spd, 24*DPR, 0.05);                     // ease UP to a crawl from rest — starting costs (weight)
+      g.turnT-=dt; if(g.turnT<0){ g.turn=rr(-1.5,1.5); g.turnT=rr(0.8,2.2); }
+      g.a += g.turn*dt;                                       // gentle meander
+      const b=g.box, topY=b.y-3*DPR;
+      // steer back onto the ledge by redirecting the HEADING inward, not snapping position
+      if(g.x<b.x+16*DPR && Math.cos(g.a)<0) g.a=rr(-0.6,0.6);
+      if(g.x>b.x+b.w-16*DPR && Math.cos(g.a)>0) g.a=Math.PI+rr(-0.6,0.6);
+      g.x += Math.cos(g.a)*g.spd*dt; g.y += Math.sin(g.a)*g.spd*dt;   // it FACES where it's going
+      g.y += (topY-g.y)*0.05;                                 // hug the ledge
+      g.legPh += g.spd*dt*0.85;                               // legs keep pace with the crawl (secondary)
+      g.timer-=dt; if(g.timer<0){ g.state='open'; g.timer=0.9; g.spd=0; }   // decides to fly — the pause
+      if(g.startled>0){ g.state='open'; g.timer=0.4; g.spd=0; g.startled=0; }
+    } else if(g.state==='open'){                              // elytra split, wings unfurl (anticipation)
+      g.shell=clamp(g.shell+dt*3,0,1); g.wing=clamp(g.wing+dt*3.4,0,1);
+      g.timer-=dt; if(g.timer<0 && g.shell>=1){ g.state='fly'; g.timer=rr(3,5.5);
+        g.tx=rr(0.18,0.82)*W; g.ty=rr(0.14,0.72)*H; g.vx=Math.cos(g.a)*12*DPR; g.vy=Math.sin(g.a)*12*DPR; }
     } else if(g.state==='fly'){
       const dx=g.tx-g.x, dy=g.ty-g.y, d=Math.hypot(dx,dy)||1;
-      g.vx=lerp(g.vx,(dx/d)*60*DPR + Math.cos(t*9)*20*DPR,0.06);
-      g.vy=lerp(g.vy,(dy/d)*60*DPR + Math.sin(t*11)*20*DPR,0.06);       // buzzy wobble
+      g.vx=lerp(g.vx,(dx/d)*66*DPR + Math.cos(t*8.5+g.seed)*22*DPR,0.05);
+      g.vy=lerp(g.vy,(dy/d)*66*DPR + Math.sin(t*10.5+g.seed)*22*DPR,0.05);   // buzzy wobble
       g.x+=g.vx*dt; g.y+=g.vy*dt; g.a=Math.atan2(g.vy,g.vx); g.wing=1;
-      g.timer-=dt; if(d<24*DPR || g.timer<0){ g.state='land'; }
+      g.timer-=dt; if(d<32*DPR || g.timer<0){ g.state='land'; }
     } else if(g.state==='land'){
-      g.vx*=0.86; g.vy*=0.86; g.x+=g.vx*dt; g.y+=g.vy*dt;
-      g.wing=clamp(g.wing-dt*2.5,0,1); g.shell=clamp(g.shell-dt*2.5,0,1);
-      if(g.wing<=0){ g.state='walk'; g.timer=rr(3,6);
-        // adopt whichever card it's nearest
+      // STRETCH THE STOP — momentum bleeds off over time (impulse), it neither halts nor shoots away
+      const k=Math.pow(0.004,dt); g.vx*=k; g.vy*=k; g.x+=g.vx*dt; g.y+=g.vy*dt;
+      if(g.vx||g.vy) g.a=Math.atan2(g.vy,g.vx);
+      if(Math.hypot(g.vx,g.vy) < 9*DPR){ g.state='settle'; g.settleT=0.55; g.vx=g.vy=0;
         g.box=boxes.reduce((m,b)=>Math.abs(b.x+b.w/2-g.x)<Math.abs(m.x+m.w/2-g.x)?b:m,boxes[0]); }
+    } else if(g.state==='settle'){
+      // the exhale after impact — wings fold, shell closes, a BEAT before it walks (breath-and-settle)
+      g.wing=clamp(g.wing-dt*3,0,1); g.shell=clamp(g.shell-dt*3,0,1);
+      g.settleT-=dt; if(g.settleT<0 && g.shell<=0){ g.state='walk'; g.a=rr(0,TAU); g.spd=0; g.turnT=0; g.timer=rr(3.5,6); }
     }
   }
   function drawBug(){
@@ -229,14 +249,16 @@
     antLead.x=lerp(antLead.x,clamp(antLead.x,b.x,b.x+b.w),0.02); antLead.y=lerp(antLead.y,cy,0.03);
     if(antLead.x<b.x+8*DPR||antLead.x>b.x+b.w-8*DPR) antLead.a=Math.PI-antLead.a;
     antLead.hist.unshift({x:antLead.x,y:antLead.y}); if(antLead.hist.length>200) antLead.hist.pop();
-    // each ant sits at a spaced point back along the leader's path
-    for(let i=0;i<ants.length;i++){ const idx=Math.min(antLead.hist.length-1,(i+1)*16);
-      const target=antLead.hist[idx]||antLead; ants[i].px=ants[i].x; ants[i].py=ants[i].y;
-      ants[i].x=lerp(ants[i].x,target.x,0.3); ants[i].y=lerp(ants[i].y,target.y,0.3); ants[i].legPh+=dt*16; }
+    // each ant trails at its OWN spacing and catch-up speed, with a small side-weave — individuals on a scent
+    for(let i=0;i<ants.length;i++){ const a=ants[i]; const idx=Math.min(antLead.hist.length-1, a.gap|0);
+      const tp=antLead.hist[idx]||antLead; a.px=a.x; a.py=a.y; a.wob+=dt*3.4;
+      a.x=lerp(a.x, tp.x, a.follow);
+      a.y=lerp(a.y, tp.y + Math.sin(a.wob)*a.wobA, a.follow);   // its own little weave off the line
+      a.legPh+=dt*16; }
   }
   function drawAnts(){
     for(let i=ants.length-1;i>=0;i--){ const a=ants[i], ang=Math.atan2(a.y-(a.py??a.y),a.x-(a.px??a.x));
-      x.save(); x.translate(a.x,a.y); x.rotate(ang);
+      x.save(); x.translate(a.x,a.y); x.rotate(ang); x.scale(a.sc||1, a.sc||1);   // each a slightly different size
       x.strokeStyle='#3a2b1e'; x.lineWidth=0.9*DPR;
       for(let s of[-1,1]) for(let j=0;j<3;j++){ const ph=a.legPh+j*2+(s>0?3:0); x.beginPath();
         x.moveTo(0,0); x.lineTo(s*(3.2*DPR)+Math.cos(ph)*1.2*DPR, s*2.4*DPR+Math.sin(ph)*1*DPR); x.stroke(); }
