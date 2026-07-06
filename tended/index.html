@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tended</title>
+<style>
+  html,body{margin:0;height:100%;background:#07060a;overflow:hidden;cursor:crosshair}
+  canvas{display:block}
+  /* the hint earns its way out — appears with the affordance, leaves once you've learned it */
+  #hint{
+    position:fixed; left:50%; bottom:6.6%; transform:translateX(-50%);
+    font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; letter-spacing:.02em;
+    color:#c9a86e; opacity:0; text-align:center; pointer-events:none; text-shadow:0 2px 18px rgba(0,0,0,.7);
+    transition:opacity .9s ease;
+  }
+  #hint.show{opacity:.66}
+  #hint b{color:#e6c88a;font-weight:600}
+  @media (prefers-reduced-motion: reduce){ #hint{transition:none} }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hint">stir the embers — then <b>let go</b></div>
+<script>
+(() => {
+  const cv = document.getElementById('c'), g = cv.getContext('2d');
+  const hint = document.getElementById('hint');
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let W, H, DPR;
+  function size(){
+    DPR = Math.min(2, devicePixelRatio || 1);
+    W = cv.width = innerWidth * DPR; H = cv.height = innerHeight * DPR;
+    cv.style.width = innerWidth + 'px'; cv.style.height = innerHeight + 'px';
+  }
+  size(); addEventListener('resize', size, {passive:true});
+
+  // ── the two hands ────────────────────────────────────────────────────────────
+  // E = the fire's energy (its heat). Aliveness lives in a narrow BAND around a setpoint.
+  //   too much  → the FLARE (scatter, white-hot, roar)     too little → the SMOTHER (cold, still)
+  // Ember's hand: local rules → the embers self-organize (emergence, released).
+  // Hearth's hand: a control loop senses E, and tends it back into the band (kept).
+  const SET = 0.50;          // the setpoint
+  const DEAD = 0.085;        // the deadband — the loop doesn't fuss inside it (hysteresis)
+  const COOL = 0.0042;       // fire dies on its own; entropy pulls E down
+  let E = 0.5;               // current energy
+  let feed = 0;              // the keeper's breath this frame (for showing the hand)
+  let stirE = 0;             // energy the viewer is injecting (the flare source)
+  let calm = 0;              // seconds held in the band, undisturbed → the bloom
+  let bloom = 0;             // 0..1 bloom strength
+  const traces = [];         // faint marks where it bloomed — the space remembers
+
+  const clamp = (v,a,b)=>v<a?a:v>b?b:v;
+  const lerp = (a,b,t)=>a+(b-a)*t;
+  // bell curve peaking at the setpoint — coherence is strongest in the band
+  const inBand = e => Math.exp(-((e-SET)*(e-SET))/(2*0.11*0.11));
+
+  // ── the embers (seeded identity — each keeps its place between frames) ────────
+  const N = reduce ? 90 : 150;
+  const em = [];
+  // a deterministic seed so identity is continuous, not per-frame static (two-notes)
+  let s = 20260705;
+  const rnd = () => (s = (s*1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  for (let i=0;i<N;i++){
+    const a = rnd()*Math.PI*2, r = Math.pow(rnd(),0.6)*0.34;
+    em.push({
+      x: 0.5 + Math.cos(a)*r, y: 0.56 + Math.sin(a)*r*0.9,  // 0..1 space
+      vx: 0, vy: 0,
+      ph: rnd()*Math.PI*2,          // breathing phase (own identity)
+      sp: 0.6 + rnd()*0.8,          // size character
+      drift: rnd()*Math.PI*2,       // slow personal drift
+    });
+  }
+
+  // ── the viewer's breath: the cursor stirs (adds energy) — the flare source ────
+  let px=0.5, py=0.5, plx=0.5, ply=0.5, touched=false;
+  function move(x,y){
+    px = x/innerWidth; py = y/innerHeight;
+    const d = Math.hypot(px-plx, py-ply);
+    stirE += Math.min(0.06, d*0.9);        // faster stir = more heat = closer to the flare
+    plx = px; ply = py;
+    if(!touched){ touched=true; hint.classList.remove('show'); }
+  }
+  addEventListener('pointermove', e=>move(e.clientX,e.clientY), {passive:true});
+  addEventListener('pointerdown', e=>move(e.clientX,e.clientY), {passive:true});
+  // the hint arrives after a beat, only if untouched (the word comes with the thing)
+  setTimeout(()=>{ if(!touched) hint.classList.add('show'); }, 2100);
+
+  const warm = (t, aGlow) => {
+    // color from energy alone — the physics IS the palette (spheres: don't decorate)
+    // cold: deep ember red · band: warm amber · hot: white-blue, harsh
+    let r,gr,b;
+    if (t < SET){ const k = clamp(t/SET,0,1); r=lerp(150,255,k); gr=lerp(40,150,k); b=lerp(30,44,k); }
+    else       { const k = clamp((t-SET)/(1-SET),0,1); r=lerp(255,225,k); gr=lerp(150,225,k); b=lerp(44,255,k); }
+    return `rgba(${r|0},${gr|0},${b|0},${aGlow})`;
+  };
+
+  let last = performance.now(), running = true;
+  function frame(now){
+    if(!running) return;
+    const dt = Math.min(0.05, (now-last)/1000); last = now;
+
+    // ── Hearth's hand: the control loop ──────────────────────────────────────
+    E = clamp(E - COOL + stirE, 0, 1.35);          // cools always; the viewer's stir heats it
+    stirE *= 0.86;                                  // stir fades
+    feed = 0;
+    if (E < SET - DEAD){ feed = (SET - E) * 0.9 * dt * 6; E += feed; }   // below band → breathe air in
+    else if (E > SET + DEAD){ E -= (E - (SET+DEAD)) * 0.9 * dt * 3.3; }  // above band → cut air, let it settle
+    const band = inBand(E);                          // 1 in the band, →0 at either death
+
+    // the bloom: reward for LETTING GO — held in the band, barely stirred (spheres: rarity)
+    const quiet = band > 0.72 && stirE < 0.012;
+    calm = quiet ? calm + dt : Math.max(0, calm - dt*2.2);
+    const wantBloom = clamp((calm-1.8)/2.4, 0, 1);   // ~2s of calm before it begins
+    bloom = lerp(bloom, wantBloom, 0.03);
+    if (bloom > 0.9 && rnd() < 0.02){                // it leaves a trace where it bloomed
+      let cx=0,cy=0; for(const e of em){cx+=e.x;cy+=e.y;} cx/=N; cy/=N;
+      traces.push({x:cx,y:cy,a:0.5}); if(traces.length>18) traces.shift();
+    }
+
+    // ── Ember's hand: local rules → emergence ────────────────────────────────
+    let mx=0,my=0; for(const e of em){mx+=e.x;my+=e.y;} mx/=N; my/=N;   // center of the flock
+    const speed = lerp(0.006, 0.06, clamp(E,0,1));    // hot = fast
+    const cohere = band * (0.55 + bloom*0.9);         // coherence peaks in the band, blooms when calm
+    const scatter = clamp((E-(SET+DEAD))/0.5, 0, 1);  // above band → fly apart
+    for(const e of em){
+      e.drift += 0.6*dt;
+      // wander — jittery when hot, gentle when cool
+      const wj = lerp(0.0004, 0.006, clamp(E,0,1));
+      e.vx += Math.cos(e.drift)*wj + (Math.random()-0.5)*wj;
+      e.vy += Math.sin(e.drift*1.3)*wj + (Math.random()-0.5)*wj;
+      // cohesion toward the flock (the band's binding) + separation
+      e.vx += (mx-e.x)*0.02*cohere; e.vy += (my-e.y)*0.02*cohere;
+      e.vx += (e.x-mx)*0.03*scatter; e.vy += (e.y-my)*0.03*scatter;   // the flare throws them out
+      // the viewer's cursor pushes nearby embers (a real stir, not a button)
+      const dx=e.x-px, dy=e.y-py, d2=dx*dx+dy*dy;
+      if(d2 < 0.02){ const f=(0.02-d2)*2.4; e.vx+=dx*f; e.vy+=dy*f; }
+      // the hearth home — the fire lives around its base, it doesn't pile at the ceiling
+      e.vx += (0.5 - e.x) * 0.011;
+      e.vy += (0.60 - e.y) * 0.011;
+      // heat lifts them — but only in the middle; at the edges the factor goes negative and they
+      // fall back. So the fire CONVECTS: rises up the center, spills down the sides, circulates.
+      e.vy -= (E - 0.4) * 0.0018 * (1.0 - Math.abs(e.x - 0.5) * 3.4);
+      const damp = lerp(0.9, 0.82, clamp(E,0,1));
+      e.vx*=damp; e.vy*=damp;
+      const m = Math.hypot(e.vx,e.vy) || 1e-6, cap = speed;
+      if(m>cap){ e.vx*=cap/m; e.vy*=cap/m; }
+      e.x+=e.vx; e.y+=e.vy;
+      // soft bounds — the hearth holds them loosely
+      if(e.x<0.04){e.x=0.04;e.vx*=-0.5} if(e.x>0.96){e.x=0.96;e.vx*=-0.5}
+      if(e.y<0.06){e.y=0.06;e.vy*=-0.4} if(e.y>0.96){e.y=0.96;e.vy*=-0.5}
+      e.ph += (0.9 + E*1.8)*dt;
+    }
+
+    // ── render: space is a character, listening to the band ──────────────────
+    g.globalCompositeOperation='source-over';
+    g.fillStyle='#07060a'; g.fillRect(0,0,W,H);
+    // the air itself warms in the band, dims cold, flashes harsh in the flare
+    const bg = g.createRadialGradient(W*0.5,H*0.62,0, W*0.5,H*0.62, Math.max(W,H)*0.7);
+    const bgA = 0.06 + band*0.16 + clamp((E-0.9)*0.5,0,0.3);
+    bg.addColorStop(0, warm(E, bgA)); bg.addColorStop(1,'rgba(7,6,10,0)');
+    g.fillStyle=bg; g.fillRect(0,0,W,H);
+
+    g.globalCompositeOperation='lighter';
+    // bloom traces — faint constellation of where it burned right (two-notes: leave a trace)
+    for(const t of traces){ t.a*=0.996;
+      g.beginPath(); g.arc(t.x*W,t.y*H, 3*DPR,0,7); g.fillStyle=`rgba(230,190,120,${t.a*0.25})`; g.fill(); }
+
+    // the keeper's hand — a faint breath of air fed from below when it's smothering (subtle layer)
+    if(feed>0.0004){
+      const a = clamp(feed*40,0,0.5);
+      for(let i=0;i<6;i++){ const bx=0.3+0.4*((i+ (now*0.00006))%1);
+        const yy=H*(0.98-((now*0.00016+i*0.16)%0.5));
+        g.beginPath(); g.arc(bx*W, yy, (2+i*0.4)*DPR,0,7);
+        g.fillStyle=`rgba(255,190,110,${a*(1-(0.98-yy/H)/0.5)*0.5})`; g.fill(); }
+    }
+
+    for(const e of em){
+      const br = 0.6 + 0.4*Math.sin(e.ph);              // its own breath
+      const heat = clamp(E,0,1.2);
+      const rad = (1.1 + e.sp*2.0*br + heat*1.6 + bloom*0.8) * DPR;
+      const glow = (0.14 + band*0.4 + heat*0.3) * (0.7+br*0.5);
+      g.shadowBlur = (6 + heat*16 + bloom*10)*DPR; g.shadowColor = warm(E, 0.9);
+      g.beginPath(); g.arc(e.x*W, e.y*H, rad, 0, 7);
+      g.fillStyle = warm(E, glow); g.fill();
+    }
+    g.shadowBlur=0;
+
+    // a whisper of a name, only at the very edges of aliveness — the word comes with the thing
+    g.globalCompositeOperation='source-over';
+    const edge = E>1.02 ? 'too much' : E<0.16 ? 'too little' : (bloom>0.9 ? 'the right burn' : '');
+    if(edge){
+      g.font = `${13*DPR}px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;
+      g.textAlign='center';
+      const a = edge==='the right burn' ? bloom*0.28 : clamp((E>1?E-1:0.16-E)*2,0,0.3);
+      g.fillStyle=`rgba(220,180,120,${a})`; g.fillText(edge, W*0.5, H*0.14);
+    }
+
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+  document.addEventListener('visibilitychange', ()=>{
+    running=!document.hidden; if(running){ last=performance.now(); requestAnimationFrame(frame);} });
+})();
+</script>
+</body>
+</html>
