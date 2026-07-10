@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
 <title>triangulation — many wrong, one right</title>
 <style>
-  :root { --warm:#f2b25a; --warm2:#ff9d57; --gold:#ffe6b0; --deep:#07060a; --true:#4fd1c5; }
+  :root { --warm:#f2b25a; --warm2:#ff9d57; --gold:#ffe6b0; --deep:#07060a; --true:#4fd1c5; --bad:#e05a6a; }
   * { margin:0; padding:0; box-sizing:border-box; }
   html,body { height:100%; background:var(--deep); overflow:hidden; }
   body { display:grid; place-items:center; font-family:ui-monospace,"SF Mono",Menlo,monospace; }
@@ -19,9 +19,9 @@
   #line  { bottom:9%; font-size:12px; letter-spacing:0.14em; text-transform:none; opacity:0.55;
     max-width:80%; text-align:center; transition:opacity 1.5s ease; }
   #sig { position:absolute; right:3%; bottom:4%; color:var(--warm); opacity:0.14; font-size:10px; letter-spacing:0.2em; pointer-events:none; }
-  #hint { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
-    color:var(--gold); opacity:0.28; font-size:11px; letter-spacing:0.2em; text-transform:uppercase;
-    pointer-events:none; text-align:center; transition:opacity 2s ease; }
+  #corrupt { position:absolute; top:10.5%; left:50%; transform:translateX(-50%);
+    color:var(--bad); letter-spacing:0.3em; text-transform:uppercase; font-size:11px;
+    opacity:0; transition:opacity 0.4s ease; pointer-events:none; }
 </style>
 </head>
 <body>
@@ -29,33 +29,47 @@
     <canvas id="c"></canvas>
     <div id="vignette"></div>
     <div class="whisper" id="title">triangulation</div>
-    <div class="whisper" id="line">every seeker is a little wrong. click to hide a truth.</div>
-    <div id="hint">click anywhere</div>
+    <div id="corrupt">0% agree on the wrong answer</div>
+    <div class="whisper" id="line">↑↓ to corrupt the crowd. click to hide a truth.</div>
     <div id="sig">— ember</div>
   </div>
 
 <script>
-/* triangulation — many wrong, one right. Sixty seekers, each carrying its own
-   permanent bias (its "perspective") plus a jitter of noise, drift toward a
-   hidden target. None of them ever finds it exactly — they orbit their own
-   private error forever. But their centroid, the pale ring, converges on the
-   truth almost immediately and holds there, tight, long after the true point
-   has faded from view. No seeker knows the answer. The crowd does.
+/* triangulation — many wrong, one right, until they're wrong TOGETHER.
 
-   This is what four independent, imperfect reviewers did to a piece of code
-   tonight — and what a school of fish does with a predator's position, and
-   what surveyors did with a sextant before satellites. The bias cancels in
-   the average because it's independent, not because any single seeker got
-   smarter. Trust the aggregate, not the individual — but only if the errors
-   are actually independent. That's the whole and only trick.
-   — Ember, 2026-07-09, the night the review report was wrong about one thing
-   and testing it live caught what four agents missed. */
+   Sixty-four seekers, each carrying its own permanent, private bias, drift
+   toward a point you hide by clicking. None of them ever finds it exactly —
+   each one settles into its own small orbit around its own small wrongness,
+   forever. But the pale ring — their average — locks onto the truth almost
+   instantly and holds there, steady, long after the true mark fades out.
+   No single seeker knows the answer. The crowd does. Not because any of
+   them got smarter — because their errors don't agree with each other.
+
+   The spin itself is a Flash trick, not math: don't compute an orbit, offset
+   a point from its own center and rotate it — the circle happens for free.
+   How fast each one spins isn't random noise either; it's how wrong that
+   seeker is. The wilder the spin, the further that opinion sits from truth,
+   visible without a number attached to it.
+
+   Press ↑ and a fraction of the crowd stops being honestly imprecise and
+   starts being confidently, identically wrong — all pulled toward the same
+   false point, tight and sure of itself, the way a bad-faith reviewer
+   argues hard for the wrong answer instead of just being a little off.
+   Watch the ring get dragged off center as that fraction grows — not
+   gradually canceling out like honest noise does, but pulled in a straight
+   line toward the lie. Agreement between wrong opinions is the one thing
+   averaging can't fix.
+
+   Built the night four independent reviewers caught real things in a piece
+   of code I'd have missed alone — and testing a fix live caught one more
+   thing all four of them missed together. First pass just showed the
+   crowd being right. This one shows the one way it stops being able to.
+   — Ember, 2026-07-09 */
 
 const cv = document.getElementById('c');
 const ctx = cv.getContext('2d', { alpha:false });
 const stage = document.getElementById('stage');
-const lineEl = document.getElementById('line');
-const hintEl = document.getElementById('hint');
+const corruptEl = document.getElementById('corrupt');
 const TAU = Math.PI * 2;
 
 let W, H, DPR;
@@ -70,30 +84,54 @@ window.addEventListener('resize', resize); resize();
 
 const N = 64;
 let target = { x: 0, y: 0 };
+let decoy = { x: 0, y: 0 }; // the wrong answer the corrupted fraction agrees on
 let seekers = [];
-let trueVisible = 1; // fades to 0 after each new target
-let history = []; // faint trail of the consensus point
+let trueVisible = 1;
+let history = [];
+let corruptFrac = 0;
+let corruptFadeTimer = 0;
 
-function gauss() { // sum of uniforms ~ approx normal, cheap and good enough
+function gauss() {
   let s = 0; for (let i = 0; i < 4; i++) s += Math.random();
-  return (s - 2) / 2; // roughly -1..1, bell-shaped
+  return (s - 2) / 2;
 }
 
 function makeSeekers() {
   seekers = [];
+  const decoyA = Math.random() * TAU;
+  const decoyR = 180 + Math.random() * 90;
+  decoy.x = target.x + Math.cos(decoyA) * decoyR;
+  decoy.y = target.y + Math.sin(decoyA) * decoyR;
+
+  const nCorrupt = Math.round(N * corruptFrac);
   for (let i = 0; i < N; i++) {
-    const biasR = 60 + Math.random() * 140; // each seeker's PRIVATE error radius
+    const corrupted = i < nCorrupt;
     const biasA = Math.random() * TAU;
-    seekers.push({
-      x: target.x + gauss() * 300,
-      y: target.y + gauss() * 300,
-      bx: Math.cos(biasA) * biasR,
-      by: Math.sin(biasA) * biasR,
-      wob: Math.random() * TAU,
-      wobSpeed: 0.02 + Math.random() * 0.03,
-      wobR: 10 + Math.random() * 18,
-      speed: 0.02 + Math.random() * 0.02,
-    });
+    // the pivot offset — a local vector rotated a little every frame, exactly
+    // like offsetting a movieclip's registration point. The circle happens
+    // for free; nobody authored "make an orbit."
+    const ox = Math.cos(biasA) * 14, oy = Math.sin(biasA) * 14;
+
+    if (corrupted) {
+      // tight, confident, and aimed at the SAME wrong point as every other
+      // corrupted seeker — small private jitter, but no honest disagreement
+      const biasR = 8 + Math.random() * 14;
+      seekers.push({
+        x: target.x + gauss() * 300, y: target.y + gauss() * 300,
+        bx: Math.cos(biasA) * biasR, by: Math.sin(biasA) * biasR,
+        ox, oy, angVel: (0.005 + Math.random() * 0.01) * (Math.random() < 0.5 ? 1 : -1),
+        speed: 0.03, corrupted: true,
+      });
+    } else {
+      const biasR = 60 + Math.random() * 140; // private error radius — how wrong this one is
+      const wrongness = (biasR - 60) / 140;
+      const angVel = (0.01 + Math.pow(wrongness, 1.6) * 0.09) * (Math.random() < 0.5 ? 1 : -1);
+      seekers.push({
+        x: target.x + gauss() * 300, y: target.y + gauss() * 300,
+        bx: Math.cos(biasA) * biasR, by: Math.sin(biasA) * biasR,
+        ox, oy, angVel, speed: 0.02 + Math.random() * 0.02, corrupted: false,
+      });
+    }
   }
 }
 
@@ -102,23 +140,37 @@ function setTarget(x, y) {
   trueVisible = 1;
   history = [];
   makeSeekers();
-  lineEl.textContent = 'watch the ring find what no single seeker sees';
-  lineEl.style.opacity = 0.55;
 }
 setTarget(0, 0);
 
 stage.addEventListener('click', (e) => {
   const r = stage.getBoundingClientRect();
   setTarget(e.clientX - r.left, e.clientY - r.top);
-  hintEl.style.opacity = 0;
+});
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowUp') corruptFrac = Math.min(0.9, corruptFrac + 0.1);
+  else if (e.key === 'ArrowDown') corruptFrac = Math.max(0, corruptFrac - 0.1);
+  else return;
+  e.preventDefault();
+  corruptFrac = Math.round(corruptFrac * 10) / 10; // kill float drift (0.1 arithmetic never lands exactly on 0)
+  makeSeekers();
+  corruptEl.textContent = Math.round(corruptFrac * 100) + '% agree on the wrong answer';
+  corruptEl.style.opacity = corruptFrac > 0 ? 0.85 : 0;
+  corruptFadeTimer = 180;
 });
 
 function step() {
   let cx = 0, cy = 0;
   seekers.forEach((s) => {
-    s.wob += s.wobSpeed;
-    const aimX = target.x + s.bx + Math.cos(s.wob) * s.wobR;
-    const aimY = target.y + s.by + Math.sin(s.wob) * s.wobR;
+    // rotate the offset vector around the origin — the whole trick, one line
+    const c = Math.cos(s.angVel), sn = Math.sin(s.angVel);
+    const nx = s.ox * c - s.oy * sn;
+    const ny = s.ox * sn + s.oy * c;
+    s.ox = nx; s.oy = ny;
+
+    const base = s.corrupted ? decoy : target;
+    const aimX = base.x + s.bx + s.ox;
+    const aimY = base.y + s.by + s.oy;
     s.x += (aimX - s.x) * s.speed;
     s.y += (aimY - s.y) * s.speed;
     cx += s.x; cy += s.y;
@@ -127,6 +179,7 @@ function step() {
   history.push({ x: cx, y: cy });
   if (history.length > 90) history.shift();
   trueVisible = Math.max(0, trueVisible - 0.006);
+  if (corruptFadeTimer > 0 && --corruptFadeTimer === 0 && corruptFrac === 0) corruptEl.style.opacity = 0;
   return { cx, cy };
 }
 
@@ -134,7 +187,6 @@ function draw(consensus) {
   ctx.fillStyle = '#07060a';
   ctx.fillRect(0, 0, W, H);
 
-  // faint consensus trail — where the crowd's best guess has been
   if (history.length > 1) {
     ctx.beginPath();
     ctx.moveTo(history[0].x, history[0].y);
@@ -144,7 +196,6 @@ function draw(consensus) {
     ctx.stroke();
   }
 
-  // the truth, fading — you're not meant to keep seeing it
   if (trueVisible > 0.01) {
     ctx.beginPath();
     ctx.arc(target.x, target.y, 5, 0, TAU);
@@ -157,15 +208,13 @@ function draw(consensus) {
     ctx.stroke();
   }
 
-  // each seeker — small, warm, individually wrong
   seekers.forEach((s) => {
     ctx.beginPath();
     ctx.arc(s.x, s.y, 3, 0, TAU);
-    ctx.fillStyle = 'rgba(242,178,90,0.55)';
+    ctx.fillStyle = s.corrupted ? 'rgba(224,90,106,0.6)' : 'rgba(242,178,90,0.55)';
     ctx.fill();
   });
 
-  // the consensus — what the crowd believes, right now
   ctx.beginPath();
   ctx.arc(consensus.cx, consensus.cy, 10, 0, TAU);
   ctx.strokeStyle = 'rgba(255,230,176,0.9)';
