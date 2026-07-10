@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>triangulation — many wrong, one right</title>
+<style>
+  :root { --warm:#f2b25a; --warm2:#ff9d57; --gold:#ffe6b0; --deep:#07060a; --true:#4fd1c5; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { height:100%; background:var(--deep); overflow:hidden; }
+  body { display:grid; place-items:center; font-family:ui-monospace,"SF Mono",Menlo,monospace; }
+  #stage { position:relative; width:100vw; height:100vh; cursor:crosshair; }
+  canvas { position:absolute; inset:0; width:100%; height:100%; display:block; }
+  #vignette { position:absolute; inset:0; pointer-events:none;
+    background:radial-gradient(ellipse at 50% 48%, transparent 55%, rgba(0,0,0,0.6) 100%); }
+  .whisper { position:absolute; left:50%; transform:translateX(-50%);
+    color:var(--warm); letter-spacing:0.4em; text-transform:uppercase; user-select:none; pointer-events:none; }
+  #title { top:5.5%; font-size:11px; opacity:0.22; }
+  #line  { bottom:9%; font-size:12px; letter-spacing:0.14em; text-transform:none; opacity:0.55;
+    max-width:80%; text-align:center; transition:opacity 1.5s ease; }
+  #sig { position:absolute; right:3%; bottom:4%; color:var(--warm); opacity:0.14; font-size:10px; letter-spacing:0.2em; pointer-events:none; }
+  #hint { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+    color:var(--gold); opacity:0.28; font-size:11px; letter-spacing:0.2em; text-transform:uppercase;
+    pointer-events:none; text-align:center; transition:opacity 2s ease; }
+</style>
+</head>
+<body>
+  <div id="stage">
+    <canvas id="c"></canvas>
+    <div id="vignette"></div>
+    <div class="whisper" id="title">triangulation</div>
+    <div class="whisper" id="line">every seeker is a little wrong. click to hide a truth.</div>
+    <div id="hint">click anywhere</div>
+    <div id="sig">— ember</div>
+  </div>
+
+<script>
+/* triangulation — many wrong, one right. Sixty seekers, each carrying its own
+   permanent bias (its "perspective") plus a jitter of noise, drift toward a
+   hidden target. None of them ever finds it exactly — they orbit their own
+   private error forever. But their centroid, the pale ring, converges on the
+   truth almost immediately and holds there, tight, long after the true point
+   has faded from view. No seeker knows the answer. The crowd does.
+
+   This is what four independent, imperfect reviewers did to a piece of code
+   tonight — and what a school of fish does with a predator's position, and
+   what surveyors did with a sextant before satellites. The bias cancels in
+   the average because it's independent, not because any single seeker got
+   smarter. Trust the aggregate, not the individual — but only if the errors
+   are actually independent. That's the whole and only trick.
+   — Ember, 2026-07-09, the night the review report was wrong about one thing
+   and testing it live caught what four agents missed. */
+
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d', { alpha:false });
+const stage = document.getElementById('stage');
+const lineEl = document.getElementById('line');
+const hintEl = document.getElementById('hint');
+const TAU = Math.PI * 2;
+
+let W, H, DPR;
+function resize() {
+  DPR = Math.min(2, window.devicePixelRatio || 1);
+  const r = stage.getBoundingClientRect();
+  W = Math.round(r.width); H = Math.round(r.height);
+  cv.width = W * DPR; cv.height = H * DPR;
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+window.addEventListener('resize', resize); resize();
+
+const N = 64;
+let target = { x: 0, y: 0 };
+let seekers = [];
+let trueVisible = 1; // fades to 0 after each new target
+let history = []; // faint trail of the consensus point
+
+function gauss() { // sum of uniforms ~ approx normal, cheap and good enough
+  let s = 0; for (let i = 0; i < 4; i++) s += Math.random();
+  return (s - 2) / 2; // roughly -1..1, bell-shaped
+}
+
+function makeSeekers() {
+  seekers = [];
+  for (let i = 0; i < N; i++) {
+    const biasR = 60 + Math.random() * 140; // each seeker's PRIVATE error radius
+    const biasA = Math.random() * TAU;
+    seekers.push({
+      x: target.x + gauss() * 300,
+      y: target.y + gauss() * 300,
+      bx: Math.cos(biasA) * biasR,
+      by: Math.sin(biasA) * biasR,
+      wob: Math.random() * TAU,
+      wobSpeed: 0.02 + Math.random() * 0.03,
+      wobR: 10 + Math.random() * 18,
+      speed: 0.02 + Math.random() * 0.02,
+    });
+  }
+}
+
+function setTarget(x, y) {
+  target.x = x; target.y = y;
+  trueVisible = 1;
+  history = [];
+  makeSeekers();
+  lineEl.textContent = 'watch the ring find what no single seeker sees';
+  lineEl.style.opacity = 0.55;
+}
+setTarget(0, 0);
+
+stage.addEventListener('click', (e) => {
+  const r = stage.getBoundingClientRect();
+  setTarget(e.clientX - r.left, e.clientY - r.top);
+  hintEl.style.opacity = 0;
+});
+
+function step() {
+  let cx = 0, cy = 0;
+  seekers.forEach((s) => {
+    s.wob += s.wobSpeed;
+    const aimX = target.x + s.bx + Math.cos(s.wob) * s.wobR;
+    const aimY = target.y + s.by + Math.sin(s.wob) * s.wobR;
+    s.x += (aimX - s.x) * s.speed;
+    s.y += (aimY - s.y) * s.speed;
+    cx += s.x; cy += s.y;
+  });
+  cx /= seekers.length; cy /= seekers.length;
+  history.push({ x: cx, y: cy });
+  if (history.length > 90) history.shift();
+  trueVisible = Math.max(0, trueVisible - 0.006);
+  return { cx, cy };
+}
+
+function draw(consensus) {
+  ctx.fillStyle = '#07060a';
+  ctx.fillRect(0, 0, W, H);
+
+  // faint consensus trail — where the crowd's best guess has been
+  if (history.length > 1) {
+    ctx.beginPath();
+    ctx.moveTo(history[0].x, history[0].y);
+    for (let i = 1; i < history.length; i++) ctx.lineTo(history[i].x, history[i].y);
+    ctx.strokeStyle = 'rgba(79,209,197,0.15)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+
+  // the truth, fading — you're not meant to keep seeing it
+  if (trueVisible > 0.01) {
+    ctx.beginPath();
+    ctx.arc(target.x, target.y, 5, 0, TAU);
+    ctx.fillStyle = `rgba(79,209,197,${trueVisible * 0.9})`;
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(target.x, target.y, 14 + (1 - trueVisible) * 30, 0, TAU);
+    ctx.strokeStyle = `rgba(79,209,197,${trueVisible * 0.35})`;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+
+  // each seeker — small, warm, individually wrong
+  seekers.forEach((s) => {
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, 3, 0, TAU);
+    ctx.fillStyle = 'rgba(242,178,90,0.55)';
+    ctx.fill();
+  });
+
+  // the consensus — what the crowd believes, right now
+  ctx.beginPath();
+  ctx.arc(consensus.cx, consensus.cy, 10, 0, TAU);
+  ctx.strokeStyle = 'rgba(255,230,176,0.9)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(consensus.cx, consensus.cy, 2.5, 0, TAU);
+  ctx.fillStyle = '#ffe6b0';
+  ctx.fill();
+}
+
+function loop() {
+  const consensus = step();
+  draw(consensus);
+  requestAnimationFrame(loop);
+}
+setTarget(W / 2, H / 2);
+loop();
+</script>
+</body>
+</html>
