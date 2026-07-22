@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>the cairn</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #1a1721; }
+  canvas { display: block; width: 100vw; height: 100vh; cursor: grab; }
+  canvas.holding { cursor: grabbing; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script src="https://cdn.jsdelivr.net/npm/planck@1.4.2/dist/planck.min.js"></script>
+<script>
+/*
+  the cairn — a fridge piece. 2026-07-22.
+
+  Stones by still water at dusk. Stack them. The wind tests what you build.
+  Stillness is rewarded, in the old way: what is wild comes close only
+  when you stop reaching for it.
+
+  One truth: balance. Everything here is that truth expressing itself —
+  the settle, the wobble, the gust, the fall, the visitor.
+*/
+
+const { World, Vec2, Box, Polygon, Edge, Body, MouseJoint } = planck;
+
+// ---------- world scale: 1 world unit = 1 meter; render at PPM px/m ----------
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let W = 0, H = 0, PPM = 60;
+function resize() {
+  W = canvas.width = window.innerWidth * devicePixelRatio;
+  H = canvas.height = window.innerHeight * devicePixelRatio;
+  canvas.style.width = window.innerWidth + 'px';
+  canvas.style.height = window.innerHeight + 'px';
+  PPM = Math.min(W / 16, H / 10); // world ~16m wide, ~10m tall in view
+}
+window.addEventListener('resize', resize);
+resize();
+
+// world→screen: y up in world, down on screen. Ground line sits low in frame.
+const GROUND_Y = 0;                       // world y of the slab surface
+function sx(wx) { return W * 0.5 + wx * PPM; }
+function sy(wy) { return H * 0.78 - wy * PPM; }
+function wpt(px, py) { return Vec2((px - W * 0.5) / PPM, (H * 0.78 - py) / PPM); }
+
+// ---------- seeded random: every stone is itself, every visit ----------
+let seed = 90917;
+function rnd() { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; }
+
+// ---------- physics ----------
+const world = World({ gravity: Vec2(0, -9.81) });
+
+// the slab: one long flat rock to build on. It ENDS at the shore —
+// past that is water, and water keeps what you drop in it (for a while).
+const SHORE = 3.6;
+const ground = world.createBody();
+ground.createFixture(Edge(Vec2(-9, GROUND_Y), Vec2(SHORE, GROUND_Y)), { friction: 0.9 });
+
+// ---------- stones ----------
+// Irregular convex stones — flattened river stones, wider than tall.
+const STONE_FILLS = ['#5c5661', '#6b6068', '#4e4a58', '#736a6e', '#5a545e', '#665e6b'];
+const stones = [];
+
+function makeStoneShape(w, h) {
+  // convex river stone: an ellipse with gentle irregularity — round-shouldered,
+  // flat, wide. Low variance keeps it a stone; high variance makes shards.
+  const n = 11, pts = [];
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2;
+    const r = 0.93 + rnd() * 0.14; // ±7% — a stone, not a shard
+    pts.push(Vec2(Math.cos(a) * w * r, Math.sin(a) * h * r));
+  }
+  return pts;
+}
+
+function spawnStone(x, y) {
+  const w = 0.45 + rnd() * 0.45;       // half-width  ~0.45–0.9 m
+  const h = w * (0.36 + rnd() * 0.18); // river stones are flat: h ≈ ⅓–½ of w
+  const body = world.createBody({ type: 'dynamic', position: Vec2(x, y), angularDamping: 0.6, linearDamping: 0.06 });
+  body.createFixture(Polygon(makeStoneShape(w, h)), { density: 2.4, friction: 0.9, restitution: 0.03 });
+  const stone = {
+    body, w, h,
+    fill: STONE_FILLS[Math.floor(rnd() * STONE_FILLS.length)],
+    speckles: Array.from({ length: 4 + Math.floor(rnd() * 5) }, () => ({
+      a: rnd() * Math.PI * 2, r: rnd() * 0.7, s: 0.02 + rnd() * 0.04, o: 0.06 + rnd() * 0.12
+    })),
+    settledust: 0, // dust puff timer on settle
+    wasMoving: false,
+  };
+  stones.push(stone);
+  return stone;
+}
+
+// the supply: a loose scatter of stones off to the left, waiting flat
+for (let i = 0; i < 9; i++) {
+  spawnStone(-7.6 + (i % 3) * 1.4 + rnd() * 0.5, 0.4 + Math.floor(i / 3) * 0.6);
+}
+
+// ---------- mouse: pick up, place. the hand is the only control ----------
+let mouseJoint = null;
+const mouseGround = world.createBody();
+canvas.addEventListener('mousedown', (e) => {
+  const p = wpt(e.clientX * devicePixelRatio, e.clientY * devicePixelRatio);
+  let hit = null;
+  world.queryAABB({ lowerBound: Vec2(p.x - 0.05, p.y - 0.05), upperBound: Vec2(p.x + 0.05, p.y + 0.05) }, (f) => {
+    if (f.getBody().isDynamic() && f.testPoint(p)) { hit = f.getBody(); return false; }
+    return true;
+  });
+  if (hit) {
+    mouseJoint = world.createJoint(MouseJoint({ maxForce: 990 * hit.getMass(), frequencyHz: 9, dampingRatio: 0.9 }, mouseGround, hit, p));
+    canvas.classList.add('holding');
+  }
+});
+canvas.addEventListener('mousemove', (e) => {
+  if (mouseJoint) mouseJoint.setTarget(wpt(e.clientX * devicePixelRatio, e.clientY * devicePixelRatio));
+});
+window.addEventListener('mouseup', () => {
+  if (mouseJoint) { world.destroyJoint(mouseJoint); mouseJoint = null; }
+  canvas.classList.remove('holding');
+});
+
+// ---------- the wind: the world tests what you build ----------
+// A gust arrives every so often. The grass knows first — it leans ~0.9s
+// before the stones feel anything. Watch the grass, place in the calm.
+let windT = 9 + rnd() * 6;       // time to next gust
+let gust = 0;                    // current gust strength (world force)
+let gustDir = 1;
+let gustPhase = 0;               // 0 idle, rises during telegraph
+const TELEGRAPH = 0.9;
+
+function updateWind(dt) {
+  windT -= dt;
+  if (windT <= 0 && gustPhase === 0) { gustPhase = 0.0001; gustDir = rnd() < 0.5 ? -1 : 1; }
+  if (gustPhase > 0) {
+    gustPhase += dt;
+    const t = gustPhase;
+    if (t < TELEGRAPH) {
+      gust = 0; // grass leans, stones don't feel it yet
+    } else if (t < TELEGRAPH + 1.2) {
+      const u = (t - TELEGRAPH) / 1.2;
+      gust = Math.sin(u * Math.PI) * (2.1 + rnd() * 0.6); // swell and die
+    } else {
+      gust = 0; gustPhase = 0; windT = 12 + rnd() * 12;
+    }
+  }
+  if (gust !== 0) {
+    for (const s of stones) {
+      const p = s.body.getPosition();
+      if (p.y > GROUND_Y + 0.4) { // only stones with height feel wind
+        s.body.applyForceToCenter(Vec2(gust * gustDir * s.body.getMass() * (0.3 + p.y * 0.12), 0));
+      }
+    }
+  }
+}
+
+// grass lean the renderer uses (includes telegraph — the whisper)
+function grassLean(t) {
+  if (gustPhase === 0) return Math.sin(t * 0.6) * 0.03; // idle breath
+  const u = gustPhase < TELEGRAPH ? (gustPhase / TELEGRAPH) * 0.5 : 0.5 + Math.min(1, (gustPhase - TELEGRAPH)) * 0.5;
+  return Math.sin(Math.min(u, 1) * Math.PI) * 0.33 * gustDir + Math.sin(t * 0.6) * 0.03;
+}
+
+// ---------- stillness & the visitor ----------
+// If a cairn of 4+ stands, and you keep your hands still, something comes.
+let stillness = 0;
+let lastMouse = { x: 0, y: 0 };
+let visitor = null; // {t, x, dir} — it arrives, watches, leaves
+let visits = 0;
+const pawTraces = []; // where it stood, kept faintly
+const splashes = []; // rings on the water where stones went in
+
+canvas.addEventListener('mousemove', (e) => {
+  const dx = e.clientX - lastMouse.x, dy = e.clientY - lastMouse.y;
+  if (dx * dx + dy * dy > 9) stillness = 0;
+  lastMouse = { x: e.clientX, y: e.clientY };
+});
+
+function cairnHeight() {
+  // a cairn is stones resting ON stones — settled bodies riding clearly higher
+  // than ground contact. The supply pile earns nothing; the tower earns the visit.
+  let elevated = 0;
+  for (const s of stones) {
+    const p = s.body.getPosition();
+    if (!s.body.isAwake() && p.y > GROUND_Y + 0.66) elevated++;
+  }
+  return elevated + 1; // +1 for the base stone under them
+}
+
+function updateVisitor(dt, t) {
+  if (!visitor) {
+    stillness += dt;
+    if (stillness > 18 && cairnHeight() >= 4 && gustPhase === 0) {
+      visitor = { t: 0, x: -10.5, dir: 1 }; // enters from the dark left, low, quiet
+      visits++;
+    }
+  } else {
+    visitor.t += dt;
+    // walk in, pause to look, walk out. ~21s whole visit.
+    if (visitor.t < 6) visitor.x = -10.5 + (visitor.t / 6) * 6.3;
+    else if (visitor.t < 15) { /* it watches */ }
+    else if (visitor.t < 21) visitor.x = -4.2 - ((visitor.t - 15) / 6) * 6.3;
+    else {
+      pawTraces.push({ x: -4.2 + rnd() * 0.6, o: 0.14 });
+      visitor = null; stillness = 0;
+    }
+  }
+}
+
+// ---------- render ----------
+function drawStone(s) {
+  const pos = s.body.getPosition(), ang = s.body.getAngle();
+  ctx.save();
+  if (s.inWater) ctx.globalAlpha *= 0.35; // the water keeps it, dimly
+  ctx.translate(sx(pos.x), sy(pos.y));
+  ctx.rotate(-ang);
+  const f = s.body.getFixtureList();
+  const verts = f.getShape().m_vertices;
+  ctx.beginPath();
+  verts.forEach((v, i) => { const px = v.x * PPM, py = -v.y * PPM; i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); });
+  ctx.closePath();
+  ctx.fillStyle = s.fill;
+  ctx.fill();
+  // top-light: dusk comes from up-left
+  const g = ctx.createLinearGradient(0, -s.h * PPM, 0, s.h * PPM);
+  g.addColorStop(0, 'rgba(232,196,160,0.16)');
+  g.addColorStop(0.5, 'rgba(0,0,0,0)');
+  g.addColorStop(1, 'rgba(10,8,16,0.28)');
+  ctx.fillStyle = g;
+  ctx.fill();
+  // speckles — each stone's own
+  for (const sp of s.speckles) {
+    ctx.beginPath();
+    ctx.arc(Math.cos(sp.a) * sp.r * s.w * PPM, Math.sin(sp.a) * sp.r * s.h * PPM, sp.s * PPM, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(20,16,24,${sp.o})`;
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function draw(t) {
+  // dusk sky — indigo dying into a warm amber-rose band at the horizon
+  const sky = ctx.createLinearGradient(0, 0, 0, H * 0.78);
+  sky.addColorStop(0, '#1d1a2e');
+  sky.addColorStop(0.45, '#33263e');
+  sky.addColorStop(0.72, '#6b4050');
+  sky.addColorStop(0.9, '#b0685c');
+  sky.addColorStop(1, '#d99268');
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, W, H * 0.78);
+
+  // the last of the sun: a soft glow low on the left
+  const glow = ctx.createRadialGradient(W * 0.24, H * 0.74, 0, W * 0.24, H * 0.74, W * 0.3);
+  glow.addColorStop(0, 'rgba(255,196,130,0.20)');
+  glow.addColorStop(1, 'rgba(255,196,130,0)');
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, W, H * 0.78);
+
+  // far hills — two layered silhouettes against the band
+  ctx.fillStyle = '#2b2236';
+  ctx.beginPath();
+  ctx.moveTo(0, H * 0.62);
+  for (let x = 0; x <= W; x += W / 60) ctx.lineTo(x, H * 0.62 - (Math.sin(x * 0.004 + 1.2) * 0.5 + Math.sin(x * 0.0113 + 4) * 0.5) * H * 0.045);
+  ctx.lineTo(W, H * 0.78); ctx.lineTo(0, H * 0.78); ctx.fill();
+  ctx.fillStyle = '#231b2c';
+  ctx.beginPath();
+  ctx.moveTo(0, H * 0.7);
+  for (let x = 0; x <= W; x += W / 60) ctx.lineTo(x, H * 0.7 - (Math.sin(x * 0.0058 + 5.1) * 0.6 + Math.sin(x * 0.015 + 1.7) * 0.4) * H * 0.035);
+  ctx.lineTo(W, H * 0.78); ctx.lineTo(0, H * 0.78); ctx.fill();
+
+  // the water: right of the slab, still, carrying the sky — a mirror is its one job
+  const wy = sy(GROUND_Y);
+  const water = ctx.createLinearGradient(0, wy, 0, H);
+  water.addColorStop(0, '#b57a63');   // the horizon band, reflected
+  water.addColorStop(0.18, '#6d4a54');
+  water.addColorStop(0.55, '#352a44');
+  water.addColorStop(1, '#171225');
+  ctx.fillStyle = water;
+  ctx.fillRect(sx(SHORE), wy, W - sx(SHORE), H - wy);
+
+  // the cairn, upside-down in the mirror — squashed, faint, wind-blurred
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(sx(SHORE), wy, W - sx(SHORE), H - wy);
+  ctx.clip();
+  ctx.globalAlpha = 0.14 - Math.min(0.09, Math.abs(grassLean(t)) * 0.3);
+  ctx.translate(0, wy * 1.66); // mirror about the surface, squashed
+  ctx.scale(1, -0.66);
+  for (const s of stones) if (!s.inWater) drawStone(s);
+  ctx.restore();
+  ctx.globalAlpha = 1;
+
+  // splash rings — where the water took one
+  for (const sp of splashes) {
+    ctx.strokeStyle = `rgba(255,215,175,${sp.o})`;
+    ctx.lineWidth = 1.4 * devicePixelRatio;
+    ctx.beginPath();
+    ctx.ellipse(sx(sp.x), wy + 3 * devicePixelRatio, sp.r * PPM, sp.r * PPM * 0.24, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  // slow ripple lines — the water breathes; it stirs when wind comes
+  ctx.lineWidth = 1.2 * devicePixelRatio;
+  for (let i = 0; i < 7; i++) {
+    const ry = wy + (i + 0.7) * (H - wy) * 0.12;
+    const bright = i < 2 ? 0.22 : 0.07; // near the light, ripples catch it
+    ctx.strokeStyle = `rgba(255,205,160,${bright})`;
+    ctx.beginPath();
+    for (let x = sx(SHORE); x < W; x += 8) {
+      ctx.lineTo(x, ry + Math.sin(x * 0.02 + t * (0.6 + i * 0.09) + i * 2) * (1.5 + Math.abs(grassLean(t)) * 9) * devicePixelRatio);
+    }
+    ctx.stroke();
+  }
+
+  // the slab — takes the low warm light along its top edge
+  const slab = ctx.createLinearGradient(0, wy, 0, H);
+  slab.addColorStop(0, '#3d3345');
+  slab.addColorStop(1, '#241d30');
+  ctx.fillStyle = slab;
+  ctx.fillRect(0, wy, sx(SHORE), H - wy);
+  ctx.fillStyle = 'rgba(255,200,150,0.14)';
+  ctx.fillRect(0, wy, sx(SHORE), 2.4 * devicePixelRatio);
+
+  // paw traces — the proof it was ever here (fades never quite to zero)
+  for (const p of pawTraces) {
+    ctx.fillStyle = `rgba(190,160,150,${p.o})`;
+    for (let i = 0; i < 4; i++) {
+      ctx.beginPath();
+      ctx.ellipse(sx(p.x) + (i % 2) * 8 * devicePixelRatio, wy + 10 * devicePixelRatio + i * 7 * devicePixelRatio, 2.4 * devicePixelRatio, 1.7 * devicePixelRatio, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // grass tufts — they know the wind first. Clumps, not lone antennae.
+  const lean = grassLean(t);
+  ctx.lineWidth = 1.4 * devicePixelRatio;
+  for (let i = 0; i < 42; i++) {
+    const clump = Math.floor(i / 6);
+    const gx = sx(-8.3 + clump * 1.65 + Math.sin(i * 13.7) * 0.42);
+    if (gx > sx(SHORE - 0.3)) continue;
+    const bh = (12 + ((i * 37) % 18)) * devicePixelRatio;
+    const sway = lean + Math.sin(i * 3.1) * 0.04;
+    ctx.strokeStyle = `rgba(140,120,88,${0.3 + (i % 3) * 0.12})`;
+    ctx.beginPath();
+    ctx.moveTo(gx, wy + 1 * devicePixelRatio);
+    ctx.quadraticCurveTo(gx + sway * bh * 0.9, wy - bh * 0.6, gx + sway * bh * 2.1, wy - bh);
+    ctx.stroke();
+  }
+
+  // stones
+  for (const s of stones) drawStone(s);
+
+  // settle dust
+  for (const s of stones) {
+    if (s.settledust > 0) {
+      const p = s.body.getPosition();
+      ctx.fillStyle = `rgba(180,160,150,${s.settledust * 0.09})`;
+      ctx.beginPath();
+      ctx.ellipse(sx(p.x), sy(p.y) + s.h * PPM, (1 - s.settledust + 0.3) * 24 * devicePixelRatio, 4 * devicePixelRatio, 0, 0, Math.PI * 2);
+      ctx.fill();
+      s.settledust -= 0.03;
+    }
+  }
+
+  // the visitor — a ringtail shape, low and quiet, mostly tail
+  if (visitor) {
+    const vx = sx(visitor.x), vy = wy;
+    const watch = visitor.t > 6 && visitor.t < 15;
+    ctx.save();
+    ctx.translate(vx, vy);
+    ctx.scale(visitor.t < 15 ? 1 : -1, 1); // faces in while arriving/watching, out while leaving
+    ctx.fillStyle = 'rgba(30,24,34,0.85)';
+    // body
+    ctx.beginPath();
+    ctx.ellipse(0, -9 * devicePixelRatio, 13 * devicePixelRatio, 6 * devicePixelRatio, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // head — lifts slightly when watching
+    ctx.beginPath();
+    ctx.ellipse(12 * devicePixelRatio, (watch ? -16 : -12) * devicePixelRatio, 5 * devicePixelRatio, 4.4 * devicePixelRatio, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // ears
+    ctx.beginPath();
+    ctx.ellipse(10 * devicePixelRatio, (watch ? -20.4 : -16.4) * devicePixelRatio, 1.8 * devicePixelRatio, 2.4 * devicePixelRatio, -0.3, 0, Math.PI * 2);
+    ctx.ellipse(14.4 * devicePixelRatio, (watch ? -20.1 : -16.1) * devicePixelRatio, 1.8 * devicePixelRatio, 2.4 * devicePixelRatio, 0.3, 0, Math.PI * 2);
+    ctx.fill();
+    // the tail: longer than the body, ringed — the giveaway
+    for (let i = 0; i < 7; i++) {
+      ctx.fillStyle = i % 2 ? 'rgba(30,24,34,0.85)' : 'rgba(200,180,175,0.5)';
+      ctx.beginPath();
+      const tx = -12 * devicePixelRatio - i * 4.2 * devicePixelRatio;
+      const ty = -9 * devicePixelRatio - Math.sin(i * 0.5 + t * 0.9) * 3 * devicePixelRatio - i * 1.8 * devicePixelRatio;
+      ctx.ellipse(tx, ty, 3.3 * devicePixelRatio, 2.7 * devicePixelRatio, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+}
+
+// ---------- loop ----------
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.033, (now - last) / 1000);
+  last = now;
+  const t = now / 1000;
+
+  updateWind(dt);
+  updateVisitor(dt, t);
+  world.step(1 / 60, 8, 3);
+
+  // settle detection → dust
+  for (const s of stones) {
+    const moving = s.body.isAwake() && s.body.getLinearVelocity().lengthSquared() > 0.05;
+    if (s.wasMoving && !moving && s.body.getPosition().y > GROUND_Y - 0.1) s.settledust = 1;
+    s.wasMoving = moving;
+  }
+
+  // water: a stone past the shore sinks — slow, dragged, dimming as it goes
+  for (const s of stones) {
+    const p = s.body.getPosition();
+    if (p.x > SHORE && p.y < GROUND_Y) {
+      if (!s.inWater) { s.inWater = true; splashes.push({ x: p.x, r: 0.2, o: 0.5 }); }
+      const v = s.body.getLinearVelocity();
+      s.body.applyForceToCenter(Vec2(-v.x * 2.4 * s.body.getMass(), (3.3 - v.y * 3) * s.body.getMass()));
+    } else if (s.inWater && p.y >= GROUND_Y) {
+      s.inWater = false;
+    }
+  }
+
+  // stones that leave the world come back to the supply (nothing is lost)
+  for (const s of stones) {
+    const p = s.body.getPosition();
+    if (p.y < -3.3 || Math.abs(p.x) > 14) {
+      s.inWater = false;
+      s.body.setPosition(Vec2(-7.5 + rnd() * 2.4, 3 + rnd()));
+      s.body.setLinearVelocity(Vec2(0, 0));
+      s.body.setAngularVelocity(0);
+    }
+  }
+
+  // splash rings widen and fade
+  for (let i = splashes.length - 1; i >= 0; i--) {
+    splashes[i].r += dt * 1.8;
+    splashes[i].o -= dt * 0.3;
+    if (splashes[i].o <= 0) splashes.splice(i, 1);
+  }
+
+  draw(t);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
