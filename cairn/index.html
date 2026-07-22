@@ -59,6 +59,9 @@ const world = World({ gravity: Vec2(0, -9.81) });
 const SHORE = 3.6;
 const ground = world.createBody();
 ground.createFixture(Edge(Vec2(-9, GROUND_Y), Vec2(SHORE, GROUND_Y)), { friction: 0.9 });
+// the lakebed: the water KEEPS what it takes — sunk stones rest here, dim,
+// still yours if you reach in after them. Nothing is lost.
+ground.createFixture(Edge(Vec2(SHORE + 0.03, -2.1), Vec2(9.5, -2.1)), { friction: 0.9 });
 
 // ---------- stones ----------
 // Irregular convex stones — flattened river stones, wider than tall.
@@ -80,10 +83,12 @@ function makeStoneShape(w, h) {
 function spawnStone(x, y) {
   const w = 0.45 + rnd() * 0.45;       // half-width  ~0.45–0.9 m
   const h = w * (0.36 + rnd() * 0.18); // river stones are flat: h ≈ ⅓–½ of w
-  const body = world.createBody({ type: 'dynamic', position: Vec2(x, y), angularDamping: 0.6, linearDamping: 0.06 });
-  body.createFixture(Polygon(makeStoneShape(w, h)), { density: 2.4, friction: 0.9, restitution: 0.03 });
+  // No fake air-drag: what slows a stone is friction and contact, honestly.
+  const body = world.createBody({ type: 'dynamic', position: Vec2(x, y), angularDamping: 0.24, linearDamping: 0.02 });
+  body.createFixture(Polygon(makeStoneShape(w, h)), { density: 3.6, friction: 0.9, restitution: 0.03 });
   const stone = {
     body, w, h,
+    area: Math.PI * w * h, // wind and water push on AREA; mass refuses by itself
     fill: STONE_FILLS[Math.floor(rnd() * STONE_FILLS.length)],
     speckles: Array.from({ length: 4 + Math.floor(rnd() * 5) }, () => ({
       a: rnd() * Math.PI * 2, r: rnd() * 0.7, s: 0.02 + rnd() * 0.04, o: 0.06 + rnd() * 0.12
@@ -111,7 +116,11 @@ canvas.addEventListener('mousedown', (e) => {
     return true;
   });
   if (hit) {
-    mouseJoint = world.createJoint(MouseJoint({ maxForce: 990 * hit.getMass(), frequencyHz: 9, dampingRatio: 0.9 }, mouseGround, hit, p));
+    // The hand has a fixed strength; the stone's mass is what refuses it.
+    // A pebble snaps to your fingers; a big stone lags and sags. That IS the weight.
+    mouseJoint = world.createJoint(MouseJoint({ maxForce: 150 + 66 * hit.getMass(), frequencyHz: 6.9, dampingRatio: 0.9 }, mouseGround, hit, p));
+    const held = stones.find(st => st.body === hit);
+    if (held) held.touched = true; // the visit honors what YOUR hand built
     canvas.classList.add('holding');
   }
 });
@@ -151,7 +160,8 @@ function updateWind(dt) {
     for (const s of stones) {
       const p = s.body.getPosition();
       if (p.y > GROUND_Y + 0.4) { // only stones with height feel wind
-        s.body.applyForceToCenter(Vec2(gust * gustDir * s.body.getMass() * (0.3 + p.y * 0.12), 0));
+        // Wind is pressure on AREA — it bullies pebbles and barely argues with boulders.
+        s.body.applyForceToCenter(Vec2(gust * gustDir * s.area * 3.3 * (0.3 + p.y * 0.12), 0));
       }
     }
   }
@@ -185,7 +195,7 @@ function cairnHeight() {
   let elevated = 0;
   for (const s of stones) {
     const p = s.body.getPosition();
-    if (!s.body.isAwake() && p.y > GROUND_Y + 0.66) elevated++;
+    if (s.touched && !s.body.isAwake() && p.y > GROUND_Y + 0.66) elevated++;
   }
   return elevated + 1; // +1 for the base stone under them
 }
@@ -409,10 +419,15 @@ function frame(now) {
   updateVisitor(dt, t);
   world.step(1 / 60, 8, 3);
 
-  // settle detection → dust
+  // settle detection → dust, sized by the momentum that just bled off.
+  // The hard landing kicks a real cloud; the soft catch barely breathes.
   for (const s of stones) {
-    const moving = s.body.isAwake() && s.body.getLinearVelocity().lengthSquared() > 0.05;
-    if (s.wasMoving && !moving && s.body.getPosition().y > GROUND_Y - 0.1) s.settledust = 1;
+    const v = s.body.getLinearVelocity().length();
+    const moving = s.body.isAwake() && v * v > 0.05;
+    if (s.wasMoving && !moving && s.body.getPosition().y > GROUND_Y - 0.1) {
+      s.settledust = Math.min(1, 0.3 + (s.lastSpeed || 0) * 0.21 * s.body.getMass() * 0.3);
+    }
+    s.lastSpeed = moving ? v : 0;
     s.wasMoving = moving;
   }
 
@@ -421,17 +436,21 @@ function frame(now) {
     const p = s.body.getPosition();
     if (p.x > SHORE && p.y < GROUND_Y) {
       if (!s.inWater) { s.inWater = true; splashes.push({ x: p.x, r: 0.2, o: 0.5 }); }
+      // Buoyancy lifts by displaced VOLUME, drag resists by area — a dense little
+      // stone drops fast; a big flat one settles down slow. Honest bookkeeping.
+      // heavy drag: the stone sighs down, it doesn't plunge (~0.6 m/s terminal)
       const v = s.body.getLinearVelocity();
-      s.body.applyForceToCenter(Vec2(-v.x * 2.4 * s.body.getMass(), (3.3 - v.y * 3) * s.body.getMass()));
+      s.body.applyForceToCenter(Vec2(-v.x * 27 * s.area, 9.81 * s.area * 1.5 - v.y * 27 * s.area));
+      s.body.setAngularVelocity(s.body.getAngularVelocity() * 0.96);
     } else if (s.inWater && p.y >= GROUND_Y) {
       s.inWater = false;
     }
   }
 
-  // stones that leave the world come back to the supply (nothing is lost)
+  // stones that truly leave the world come back to the supply (nothing is lost)
   for (const s of stones) {
     const p = s.body.getPosition();
-    if (p.y < -3.3 || Math.abs(p.x) > 14) {
+    if (p.y < -6 || Math.abs(p.x) > 14) {
       s.inWater = false;
       s.body.setPosition(Vec2(-7.5 + rnd() * 2.4, 3 + rnd()));
       s.body.setLinearVelocity(Vec2(0, 0));
@@ -450,6 +469,9 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
+
+// acceptance hook — lets a harness interrogate the world (record-the-motion law)
+window.__cairn = { world, stones, splashes, spawnStone, SHORE, GROUND_Y };
 </script>
 </body>
 </html>
