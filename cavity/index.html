@@ -17,6 +17,14 @@
                color: rgba(71,85,105,0.55); background: none; border: none; cursor: pointer;
                padding: 6px; transition: color 0.6s ease; white-space: nowrap; }
   #sound-btn:hover { color: rgba(148,163,184,0.85); }
+  /* If you reach for a control and the piece is mute, it has to say so. Audio
+     still only starts on a real tap — the law stands — but the silence stops
+     being a mystery. */
+  @keyframes call { 0%,100% { opacity: .42 } 50% { opacity: 1 } }
+  #sound-btn.calling { color: rgba(245,158,11,0.92); animation: call 3s ease-in-out infinite; }
+  #ear-wrap.muted #ear-label::after {
+    content: ' · press ♪ to hear it'; color: rgba(245,158,11,0.72);
+  }
 
   input[type=range] { -webkit-appearance: none; appearance: none; height: 2px;
                       background: rgba(71,85,105,0.35); outline: none; cursor: pointer; }
@@ -45,7 +53,7 @@
   #hint.gone { opacity: 0; }
 
   #inscription { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); font-size: 11px;
-                 letter-spacing: 3.5px; color: rgba(148,163,184,0.06); white-space: nowrap;
+                 letter-spacing: 3.5px; color: rgba(199,210,254,0); white-space: nowrap;
                  transition: color 3s ease; pointer-events: none; }
   #inscription.lit { color: rgba(199,210,254,0.74); }
 </style>
@@ -251,19 +259,31 @@ function applyEar() {
   master.gain.setTargetAtTime(volCurve(parseFloat(volSlider.value)), t, 0.09);
 }
 
+// Reaching for a control that can't answer yet must not be met with silence.
+function nudgeSound() {
+  if (soundOn) return;
+  soundBtn.classList.add('calling');
+  elEarWrap.classList.add('muted');
+}
+function stopNudging() {
+  soundBtn.classList.remove('calling');
+  elEarWrap.classList.remove('muted');
+}
+
 soundBtn.addEventListener('click', () => {
   if (!soundOn) {
-    initAudio(); soundBtn.textContent = '♪ on';
+    initAudio(); soundBtn.textContent = '♪ on'; stopNudging();
   } else if (audioCtx.state === 'running') {
     audioCtx.suspend(); soundBtn.textContent = '♪ off';
   } else {
     audioCtx.resume(); soundBtn.textContent = '♪ on';
   }
 });
-volSlider.addEventListener('input', applyEar);
+volSlider.addEventListener('input', () => { applyEar(); nudgeSound(); });
 earSlider.addEventListener('input', () => {
   applyEar();
   elEarWrap.classList.toggle('live', parseFloat(earSlider.value) > 0.04);
+  nudgeSound();
 });
 
 // ── Life ──────────────────────────────────────────────────────────────────────
