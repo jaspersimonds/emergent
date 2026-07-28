@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cavity</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #030712; overflow: hidden; font-family: Georgia, 'Times New Roman', serif; }
+  canvas { display: block; touch-action: none; }
+
+  .ui { position: fixed; color: rgba(148,163,184,0.42); font-size: 11px; letter-spacing: 2px;
+        text-transform: uppercase; user-select: none; }
+
+  #controls { top: 22px; right: 26px; display: flex; align-items: center; gap: 12px; }
+  #sound-btn { font-family: inherit; font-size: 11px; letter-spacing: 2px; text-transform: uppercase;
+               color: rgba(71,85,105,0.55); background: none; border: none; cursor: pointer;
+               padding: 6px; transition: color 0.6s ease; white-space: nowrap; }
+  #sound-btn:hover { color: rgba(148,163,184,0.85); }
+
+  input[type=range] { -webkit-appearance: none; appearance: none; height: 2px;
+                      background: rgba(71,85,105,0.35); outline: none; cursor: pointer; }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 9px; height: 9px;
+      border-radius: 50%; background: rgba(245,158,11,0.75); cursor: pointer; transition: background 0.3s; }
+  input[type=range]::-webkit-slider-thumb:hover { background: rgba(245,158,11,1); }
+  input[type=range]::-moz-range-thumb { width: 9px; height: 9px; border-radius: 50%; border: none;
+      background: rgba(245,158,11,0.75); cursor: pointer; }
+  #vol { width: 58px; }
+
+  /* The ear — the most important control in the piece, so it sits alone and centred */
+  #ear-wrap { bottom: 74px; left: 50%; transform: translateX(-50%);
+              display: flex; flex-direction: column; align-items: center; gap: 9px; }
+  #ear { width: 216px; }
+  #ear-label { font-size: 10px; letter-spacing: 3.5px; color: rgba(148,163,184,0.30);
+               transition: color 0.9s ease; }
+  #ear-wrap.live #ear-label { color: rgba(199,210,254,0.62); }
+
+  #readout { top: 22px; left: 26px; font-size: 10.5px; letter-spacing: 2.5px;
+             color: rgba(148,163,184,0.30); line-height: 1.9; }
+  #readout b { font-weight: normal; color: rgba(226,232,240,0.72); transition: color 1.2s ease; }
+  #r-best.up { color: rgba(245,158,11,0.95); transition: color 0.18s ease; }
+
+  #hint { bottom: 26px; left: 26px; font-size: 10px; letter-spacing: 2px;
+          color: rgba(148,163,184,0.26); transition: opacity 1.8s ease; line-height: 2; }
+  #hint.gone { opacity: 0; }
+
+  #inscription { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); font-size: 11px;
+                 letter-spacing: 3.5px; color: rgba(148,163,184,0.06); white-space: nowrap;
+                 transition: color 3s ease; pointer-events: none; }
+  #inscription.lit { color: rgba(199,210,254,0.74); }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div class="ui" id="readout">
+  notes <b id="r-notes">2</b> &nbsp;·&nbsp; tones <b id="r-tones">1</b> &nbsp;·&nbsp; heard <b id="r-heard">1</b>
+  &nbsp;·&nbsp; most <b id="r-best">1</b>
+</div>
+
+<div class="ui" id="controls">
+  <input type="range" id="vol" min="0" max="1" step="0.01" value="0.7">
+  <button id="sound-btn">♪ sound</button>
+</div>
+
+<div class="ui" id="ear-wrap">
+  <input type="range" id="ear" min="0" max="1" step="0.001" value="0">
+  <div id="ear-label">ear</div>
+</div>
+
+<div class="ui" id="hint">
+  drag a note to tune it<br>tap the field to add one &nbsp;·&nbsp; tap a note to take it away
+</div>
+
+<div id="inscription">you did not play that</div>
+
+<script>
+const TAU = Math.PI * 2;
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+
+const elNotes = document.getElementById('r-notes');
+const elTones = document.getElementById('r-tones');
+const elHeard = document.getElementById('r-heard');
+const elBest  = document.getElementById('r-best');
+let bestHeard = 0, bestTimer = null;
+const elHint  = document.getElementById('hint');
+const elInscr = document.getElementById('inscription');
+const elEarWrap = document.getElementById('ear-wrap');
+const earSlider = document.getElementById('ear');
+const volSlider = document.getElementById('vol');
+const soundBtn  = document.getElementById('sound-btn');
+
+let W, H;
+function resize() { W = canvas.width = innerWidth; H = canvas.height = innerHeight; }
+resize(); addEventListener('resize', resize);
+
+// ── The frequency axis ────────────────────────────────────────────────────────
+// Vertical position IS pitch, logarithmically — because the ear hears ratios,
+// not amounts (sound/psychoacoustics). Low at the floor, high at the ceiling.
+// F_MIN sits well below hearing on purpose: the bottom of the field is a real
+// room, not a hairline. Tones that fall out of audibility need somewhere to go
+// where you can watch them pile up.
+const F_MIN = 4, F_MAX = 760;
+const LOG_SPAN = Math.log(F_MAX / F_MIN);
+const TOP_PAD = 90, BOT_PAD = 118;
+function fieldH() { return H - TOP_PAD - BOT_PAD; }
+function freqToY(f) {
+  const t = Math.log(Math.max(f, 0.5) / F_MIN) / LOG_SPAN;   // 0 at F_MIN, 1 at F_MAX
+  return TOP_PAD + fieldH() * (1 - Math.min(Math.max(t, 0), 1.02));
+}
+function yToFreq(y) {
+  const t = 1 - (y - TOP_PAD) / fieldH();
+  return F_MIN * Math.exp(t * LOG_SPAN);
+}
+
+// The hearing floor. Below ~20 Hz a difference tone is no longer a tone —
+// it is a beating, then it is nothing. This line is where the third voice dies.
+const F_FLOOR = 20;
+
+// ── Carriers ──────────────────────────────────────────────────────────────────
+const PALETTE = [
+  [245,158,11],   // amber
+  [129,140,248],  // indigo
+  [45,212,191],   // teal
+  [244,114,182],  // rose
+  [167,139,250],  // violet
+  [56,189,248],   // sky
+];
+const MAX_NOTES = 6;
+// The child of a squared pair has amplitude a² — so carrier level is not a taste
+// decision, it is the difference between hearing the third voice and not. Halve
+// the carriers and you quarter the thing the whole piece is about.
+const CARRIER_AMP = 0.22;
+const ATTACK = 0.9;    // a swell, not a strike — something approaching
+const RELEASE = 1.2;   // weighty things take time to let go (sound/envelopes)
+
+let nextId = 0;
+const carriers = [];
+
+function addCarrier(freq, x) {
+  if (carriers.length >= MAX_NOTES) return null;
+  const used = carriers.map(c => c.ci);
+  let ci = 0; while (used.includes(ci) && ci < PALETTE.length - 1) ci++;
+  const c = {
+    id: nextId++, ci,
+    freq: Math.min(Math.max(freq, 40), F_MAX * 0.92),
+    x: x != null ? x : W * (0.28 + Math.random() * 0.44),
+    vx: 0, phase: Math.random() * TAU,
+    osc: null, gain: null, born: frame,
+  };
+  carriers.push(c);
+  if (audioCtx) wireCarrier(c);
+  return c;
+}
+function removeCarrier(c) {
+  const i = carriers.indexOf(c);
+  if (i < 0 || carriers.length <= 1) return;
+  carriers.splice(i, 1);
+  if (c.gain && audioCtx) {
+    // let it go, don't cut it — a cut note dies, it doesn't end
+    c.gain.gain.setTargetAtTime(0, audioCtx.currentTime, RELEASE / 3);
+    const osc = c.osc;
+    setTimeout(() => { try { osc.stop(); } catch (e) {} }, RELEASE * 2400);
+    balanceBus();
+  }
+}
+
+// ── Audio ─────────────────────────────────────────────────────────────────────
+// carriers → sumBus →┬─ dryGain ─────────────┐
+//                    └─ shaper(x²) → wetGain ┴→ highpass → master → out
+//
+// The wet path is the nonlinearity. It is not an effect — it is a model of the
+// listener. A perfectly linear ear creates nothing; put a squared term in it and
+// every pair of tones starts giving birth. The `ear` slider is a knob on your
+// own cochlea (sound/psychoacoustics).
+let audioCtx = null, master = null, sumBus = null, dryGain = null, wetGain = null;
+let soundOn = false;
+
+function makeSquareCurve() {
+  const n = 2049, curve = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const x = (i / (n - 1)) * 2 - 1;
+    curve[i] = x * x;            // the quadratic term alone; mixed in by wetGain
+  }
+  return curve;
+}
+
+// The ear does logs, so the slider is squared — but squared-and-then-scaled-down
+// left the whole piece around -43 dBFS, which is a third voice nobody can hear.
+// The curve has to end somewhere loud enough to be touched by (sound/what-sound-is).
+function volCurve(v) { return Math.min(v * v * 2.4, 2.0); }
+
+function initAudio() {
+  if (audioCtx) return;
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+  master = audioCtx.createGain();
+  master.gain.value = volCurve(parseFloat(volSlider.value));
+  master.connect(audioCtx.destination);
+
+  const hp = audioCtx.createBiquadFilter();      // kills the DC the squarer produces
+  hp.type = 'highpass'; hp.frequency.value = 14; hp.Q.value = 0.5;
+  hp.connect(master);
+
+  sumBus = audioCtx.createGain(); sumBus.gain.value = 1;
+
+  dryGain = audioCtx.createGain(); dryGain.gain.value = 1;
+  sumBus.connect(dryGain); dryGain.connect(hp);
+
+  const shaper = audioCtx.createWaveShaper();
+  shaper.curve = makeSquareCurve();
+  wetGain = audioCtx.createGain(); wetGain.gain.value = 0;
+  sumBus.connect(shaper); shaper.connect(wetGain); wetGain.connect(hp);
+
+  carriers.forEach(wireCarrier);
+  applyEar();
+  soundOn = true;
+}
+
+function wireCarrier(c) {
+  if (!audioCtx || c.osc) return;
+  const g = audioCtx.createGain(); g.gain.value = 0;
+  const o = audioCtx.createOscillator();
+  o.type = 'sine'; o.frequency.value = c.freq;
+  o.connect(g); g.connect(sumBus); o.start();
+  g.gain.setTargetAtTime(CARRIER_AMP, audioCtx.currentTime, ATTACK / 3);
+  c.osc = o; c.gain = g;
+  balanceBus();
+}
+
+// Keep the summed signal inside the shaper's honest range as notes are added.
+// This is not just headroom: it is the truth that a fixed amount of energy split
+// more ways makes weaker children. The lattice pays for every new voice.
+function balanceBus() {
+  if (!audioCtx || !sumBus) return;
+  const target = Math.min(1, 2.0 / Math.max(2, carriers.length));
+  sumBus.gain.setTargetAtTime(target, audioCtx.currentTime, 0.25);
+}
+
+function applyEar() {
+  if (!audioCtx) return;
+  const k = parseFloat(earSlider.value);
+  const t = audioCtx.currentTime;
+  wetGain.gain.setTargetAtTime(k * 2.2, t, 0.09);
+  dryGain.gain.setTargetAtTime(1 - k * 0.28, t, 0.09);
+  // NO ear-compensation on the master. Dividing the output as the ear opened
+  // meant the one control that reveals the phenomenon also dimmed the piece —
+  // turning it up made everything quieter. The room genuinely does get fuller
+  // when the ear goes nonlinear; let it.
+  master.gain.setTargetAtTime(volCurve(parseFloat(volSlider.value)), t, 0.09);
+}
+
+soundBtn.addEventListener('click', () => {
+  if (!soundOn) {
+    initAudio(); soundBtn.textContent = '♪ on';
+  } else if (audioCtx.state === 'running') {
+    audioCtx.suspend(); soundBtn.textContent = '♪ off';
+  } else {
+    audioCtx.resume(); soundBtn.textContent = '♪ on';
+  }
+});
+volSlider.addEventListener('input', applyEar);
+earSlider.addEventListener('input', () => {
+  applyEar();
+  elEarWrap.classList.toggle('live', parseFloat(earSlider.value) > 0.04);
+});
+
+// ── Life ──────────────────────────────────────────────────────────────────────
+// The notes drift, but ONLY sideways. Height is pitch and pitch is the physics —
+// if they wandered vertically the piece would be lying to make itself pretty.
+// Horizontal position means nothing to the sound, so it is free, and free is
+// where the aliveness goes.
+function driftCarriers() {
+  carriers.forEach((c, i) => {
+    if (c === drag) return;
+    c.vx += Math.sin(frame * 0.0031 + c.phase) * 0.010;
+    carriers.forEach(o => {
+      if (o === c) return;
+      const dx = c.x - o.x;
+      if (Math.abs(dx) < 140 && dx !== 0) c.vx += (dx > 0 ? 1 : -1) * 0.012 * (1 - Math.abs(dx)/140);
+    });
+    c.vx *= 0.965;
+    c.x += c.vx;
+    const PAD = 70;
+    if (c.x < PAD)     c.vx += 0.30;
+    if (c.x > W - PAD) c.vx -= 0.30;
+  });
+}
+
+// A tone should arrive the way a note arrives — a swell, not an appearance.
+// Same law as the audio envelope, applied to light (sound/envelopes-and-the-gesture).
+const childState = new Map();
+function smoothChild(t) {
+  let s = childState.get(t.key);
+  if (!s) { s = { amp: 0, x: t.x, y: t.y }; childState.set(t.key, s); }
+  s.amp += (t.amp - s.amp) * 0.055;   // ~0.6 s to bloom at 60 fps
+  s.x += (t.x - s.x) * 0.14;
+  s.y += (t.y - s.y) * 0.14;
+  s.col = t.col; s.order = t.order; s.heard = t.heard; s.f = t.f;
+  s.parents = t.parents; s.live = true;
+  return s;
+}
+
+// ── The lattice ───────────────────────────────────────────────────────────────
+// Every pair of carriers makes a difference tone. N carriers make C(N,2) of them,
+// and those children have differences of their own. Nobody plays these.
+function computeLattice() {
+  const k = parseFloat(earSlider.value);
+  const first = [];
+  for (let i = 0; i < carriers.length; i++) {
+    for (let j = i + 1; j < carriers.length; j++) {
+      const a = carriers[i], b = carriers[j];
+      const d = Math.abs(a.freq - b.freq);
+      // magnitude grows as the interval tightens — and the tone it makes sinks
+      const tight = 1 / (1 + d / 165);
+      first.push({
+        key: 'p' + a.id + '_' + b.id,
+        f: d, x: (a.x + b.x) / 2, y: freqToY(d),
+        // `level` is on the SAME scale as a carrier's gain, so audibility can be
+        // judged without inventing a constant: squaring two carriers of amplitude
+        // a gives a child of a², then the wet path lifts it. Measured against the
+        // real output this lands the child ~10 dB under its parents, which is what
+        // an analyser on the master bus actually reports.
+        level: CARRIER_AMP * CARRIER_AMP * (k * 2.2) * tight,
+        amp: k * tight * 0.9,
+        col: [0,1,2].map(n => (PALETTE[a.ci][n] + PALETTE[b.ci][n]) / 2),
+        parents: [a, b], order: 1,
+      });
+    }
+  }
+  // second order — only once the ear is strongly nonlinear, and only the loudest few
+  const second = [];
+  if (k > 0.5 && first.length > 1) {
+    const strong = first.slice().sort((p, q) => q.amp - p.amp).slice(0, 4);
+    for (let i = 0; i < strong.length; i++) {
+      for (let j = i + 1; j < strong.length; j++) {
+        const d = Math.abs(strong[i].f - strong[j].f);
+        if (d < 4) continue;
+        second.push({
+          key: 's' + strong[i].key + strong[j].key,
+          f: d, x: (strong[i].x + strong[j].x) / 2, y: freqToY(d),
+          level: strong[i].level * strong[j].level / CARRIER_AMP * (k - 0.5) * 2,
+          amp: (k - 0.5) * 2 * Math.min(strong[i].amp, strong[j].amp) * 0.5,
+          col: [0,1,2].map(n => (strong[i].col[n] + strong[j].col[n]) / 2),
+          parents: [], order: 2,
+        });
+      }
+    }
+  }
+  return first.concat(second);
+}
+
+// Masking, on the ear's own scale. A loud tone hides weaker ones that fall inside
+// its critical band — and the critical band is NOT a fixed ratio. Down in the bass
+// it is roughly 100 Hz wide no matter how low you go (Zwicker), which is why the
+// low register is where everything smothers everything. Difference tones are
+// always lower than their parents, so this is exactly where they all land.
+function criticalBandwidth(f) {
+  return 25 + 75 * Math.pow(1 + 1.4 * Math.pow(f / 1000, 2), 0.69);
+}
+// Two tones inside one critical band are not two tones. Whether one is louder
+// (masking) or they are level (fusion — you hear a single beating thing), the ear
+// delivers ONE event. So the honest count is not "tones that survive" but
+// "distinct things the ear can resolve": cluster by critical band, count clusters.
+const AUDIBLE_FLOOR = CARRIER_AMP * Math.pow(10, -45 / 20);  // 45 dB under a note
+function countHeard(lattice) {
+  lattice.forEach(t => { t.heard = false; });
+  const live = lattice
+    .filter(t => t.f >= F_FLOOR && t.level >= AUDIBLE_FLOOR)
+    .sort((a, b) => a.f - b.f);
+
+  const clusters = [];
+  live.forEach(t => {
+    const last = clusters[clusters.length - 1];
+    const band = criticalBandwidth(t.f) * 0.5;
+    if (last && t.f - last.lead.f < band) {
+      last.members.push(t);
+      if (t.level > last.lead.level) last.lead = t;   // the loudest speaks for the group
+    } else {
+      clusters.push({ lead: t, members: [t] });
+    }
+  });
+
+  let heard = 0;
+  clusters.forEach(cl => {
+    // a carrier sitting in the same band swamps the whole cluster — and a carrier
+    // really is about 10 dB up on its own children, so this is not a thumb on the
+    // scale, it is the measured relationship
+    const swamped = carriers.some(c =>
+      Math.abs(c.freq - cl.lead.f) < criticalBandwidth(cl.lead.f) * 0.5 &&
+      CARRIER_AMP > cl.lead.level * 1.15);
+    if (swamped) return;
+    cl.lead.heard = true;
+    heard++;
+  });
+  return heard;
+}
+
+// ── Interaction ───────────────────────────────────────────────────────────────
+let drag = null, downAt = 0, downPos = null, movedFar = false, downOnCanvas = false;
+let hasTuned = false, hasAdded = false;
+
+function pick(px, py) {
+  let best = null, bestD = 26;
+  carriers.forEach(c => {
+    const d = Math.hypot(px - c.x, py - freqToY(c.freq));
+    if (d < bestD) { bestD = d; best = c; }
+  });
+  return best;
+}
+
+canvas.addEventListener('pointerdown', e => {
+  downAt = performance.now(); downPos = { x: e.clientX, y: e.clientY };
+  movedFar = false; downOnCanvas = true;
+  drag = pick(e.clientX, e.clientY);
+  if (drag) canvas.setPointerCapture(e.pointerId);
+});
+canvas.addEventListener('pointermove', e => {
+  if (downPos && Math.hypot(e.clientX - downPos.x, e.clientY - downPos.y) > 5) movedFar = true;
+  if (!drag) return;
+  drag.freq = Math.min(Math.max(yToFreq(e.clientY), 40), F_MAX * 0.92);
+  drag.x = Math.min(Math.max(e.clientX, 40), W - 40);
+  if (drag.osc && audioCtx) drag.osc.frequency.setTargetAtTime(drag.freq, audioCtx.currentTime, 0.03);
+  hasTuned = true; maybeHideHint();
+});
+addEventListener('pointerup', e => {
+  // only a gesture that STARTED on the field counts — otherwise releasing a
+  // slider anywhere on the page would add or remove a note
+  if (downOnCanvas) {
+    const quick = performance.now() - downAt < 300 && !movedFar;
+    if (quick) {
+      if (drag) removeCarrier(drag);
+      else if (e.target === canvas) {
+        const c = addCarrier(yToFreq(e.clientY), e.clientX);
+        if (c) { hasAdded = true; maybeHideHint(); }
+      }
+    }
+  }
+  drag = null; downPos = null; downOnCanvas = false;
+});
+function maybeHideHint() { if (hasTuned && hasAdded) elHint.classList.add('gone'); }
+
+// ── The two starting notes ────────────────────────────────────────────────────
+// D4 and A4 — a just fifth (2:3). Their difference is 441 − 294 = 147, which is
+// exactly D3: one octave below the lower note. That is Tartini's tone, and it is
+// the reason to open here rather than anywhere else — the first thing the ear
+// makes is not a stray frequency, it is the root, an octave down. It also lands
+// where a laptop speaker can actually reproduce it, which 44 Hz did not.
+let frame = 0;
+addCarrier(294, 0);  addCarrier(441, 0);
+carriers[0].x = W * 0.38; carriers[1].x = W * 0.62;
+
+// ── Draw ──────────────────────────────────────────────────────────────────────
+let inscriptionFired = false;
+
+function draw(lattice, heard) {
+  // enough persistence to smear the drift into motion, not enough to accumulate
+  // the gradients' bounding boxes into visible rectangles
+  ctx.fillStyle = 'rgba(3, 7, 18, 0.55)';
+  ctx.fillRect(0, 0, W, H);
+
+  // the hearing floor — the third voice dies at this line, not at zero
+  const fy = freqToY(F_FLOOR);
+  ctx.beginPath(); ctx.moveTo(0, fy); ctx.lineTo(W, fy);
+  ctx.strokeStyle = 'rgba(71,85,105,0.20)'; ctx.lineWidth = 1;
+  ctx.setLineDash([2, 7]); ctx.stroke(); ctx.setLineDash([]);
+  ctx.font = '9px Georgia, serif';
+  ctx.fillStyle = 'rgba(100,116,139,0.28)';
+  ctx.textAlign = 'right';
+  ctx.fillText('20 Hz  ·  below here, nothing sounds', W - 26, fy - 8);
+  ctx.textAlign = 'left';
+
+  // smooth every living child toward where the physics says it is — the numbers
+  // jump, the light does not. Orphans stay in the map and let go on their own.
+  lattice.forEach(t => smoothChild(t));
+
+  // parent lines — faint, so you can see which pair made which child
+  childState.forEach(s => {
+    if (!s.live || s.order !== 1 || s.amp < 0.02) return;
+    const a = s.amp * (s.heard ? 0.26 : 0.10);
+    s.parents.forEach(p => {
+      ctx.beginPath();
+      ctx.moveTo(p.x, freqToY(p.freq)); ctx.lineTo(s.x, s.y);
+      ctx.strokeStyle = `rgba(${s.col.map(Math.round).join(',')},${a})`;
+      ctx.lineWidth = 0.6; ctx.stroke();
+    });
+  });
+
+  // the children — including the ones on their way out
+  childState.forEach(s => {
+    if (s.amp < 0.012) return;
+    const grey = s.f < F_FLOOR || !s.heard;
+    const col = grey ? [120, 132, 152] : s.col.map(Math.round);
+    // children stay visibly subordinate to the notes anyone actually played —
+    // they are consequences, not sources
+    const a = s.amp * (grey ? 0.30 : 0.72) * (s.order === 2 ? 0.55 : 1);
+    const r = (s.order === 2 ? 1.8 : 2.8) + s.amp * 2.4;
+
+    const g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, r * 7);
+    g.addColorStop(0, `rgba(${col.join(',')},${a * 0.5})`);
+    g.addColorStop(1, `rgba(${col.join(',')},0)`);
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(s.x, s.y, r * 7, 0, TAU); ctx.fill();
+
+    ctx.beginPath(); ctx.arc(s.x, s.y, r, 0, TAU);
+    ctx.fillStyle = `rgba(${col.join(',')},${Math.min(1, a * 1.5)})`; ctx.fill();
+  });
+
+  // the carriers — the only things anyone is actually playing
+  carriers.forEach(c => {
+    const y = freqToY(c.freq);
+    const [r, g, b] = PALETTE[c.ci];
+    const breathe = 1 + 0.06 * Math.sin(frame * 0.017 + c.phase);
+    const glow = 46 * breathe;
+    const halo = ctx.createRadialGradient(c.x, y, 0, c.x, y, glow);
+    halo.addColorStop(0,   `rgba(${r},${g},${b},0.20)`);
+    halo.addColorStop(0.5, `rgba(${r},${g},${b},0.06)`);
+    halo.addColorStop(1,   `rgba(${r},${g},${b},0)`);
+    ctx.fillStyle = halo;
+    ctx.beginPath(); ctx.arc(c.x, y, glow, 0, TAU); ctx.fill();
+
+    ctx.beginPath(); ctx.arc(c.x, y, 7 * breathe, 0, TAU);
+    ctx.fillStyle = `rgb(${r},${g},${b})`; ctx.fill();
+    ctx.beginPath(); ctx.arc(c.x, y, 2.8, 0, TAU);
+    ctx.fillStyle = 'rgba(255,255,255,0.55)'; ctx.fill();
+  });
+}
+
+function loop() {
+  driftCarriers();
+  const lattice = computeLattice();
+  const heard = countHeard(lattice);
+
+  // children whose parents are gone let go instead of vanishing
+  const live = new Set(lattice.map(t => t.key));
+  childState.forEach((s, key) => {
+    s.live = live.has(key);
+    if (s.live) return;
+    s.amp *= 0.94;
+    if (s.amp < 0.004) childState.delete(key);
+  });
+
+  elNotes.textContent = carriers.length;
+  elTones.textContent = lattice.filter(t => t.order === 1).length;
+  elHeard.textContent = heard;
+
+  // How many can you get to glow at once? The scarcity is the difficulty, so the
+  // high-water mark is the whole game — no score, no reward, just the number you
+  // have not beaten yet. The ceiling is not printed anywhere on purpose.
+  if (heard > bestHeard) {
+    bestHeard = heard;
+    elBest.textContent = heard;
+    elBest.classList.add('up');
+    clearTimeout(bestTimer);
+    bestTimer = setTimeout(() => elBest.classList.remove('up'), 1200);
+  }
+
+  // the word arrives with the swell, never before
+  if (!inscriptionFired && heard > 0 && parseFloat(earSlider.value) > 0.12) {
+    inscriptionFired = true;
+    elInscr.classList.add('lit');
+    elHint.classList.add('gone');   // you made a tone appear; you don't need telling
+  } else if (inscriptionFired && heard === 0) {
+    elInscr.classList.remove('lit');
+    inscriptionFired = false;
+  }
+
+  draw(lattice, heard);
+  frame++;
+  requestAnimationFrame(loop);
+}
+loop();
+
+// exposed for verification — the preview freezes rAF, so the maths must be
+// checkable without watching it move
+window.__cavity = { carriers, computeLattice, countHeard, freqToY, yToFreq, addCarrier,
+  graph: () => ({ ctx: audioCtx, master, sumBus, dryGain, wetGain }) };
+</script>
+</body>
+</html>
