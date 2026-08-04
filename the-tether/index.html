@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Tether</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; width: 100%; height: 100%; overflow: hidden;
+    background: #030509; color: #c8b88a; font-family: Georgia, serif;
+  }
+  canvas { display: block; width: 100%; height: 100%; cursor: none; }
+  #veil {
+    position: fixed; inset: 0; display: grid; place-items: center;
+    background: radial-gradient(circle at center, rgba(18,14,26,0.78), rgba(3,5,9,0.94) 62%);
+    transition: opacity 1.2s ease; pointer-events: auto; z-index: 5;
+  }
+  #veil.gone { opacity: 0; pointer-events: none; }
+  #intro { text-align: center; max-width: 560px; padding: 24px; }
+  h1 {
+    margin: 0 0 22px; font-weight: normal; font-size: 20px;
+    letter-spacing: 0.46em; text-transform: uppercase; color: #dcc680;
+  }
+  p {
+    margin: 12px 0; color: rgba(210,208,190,0.52);
+    font-size: 15px; line-height: 1.75; letter-spacing: 0.08em;
+  }
+  .start {
+    margin-top: 30px; color: rgba(220,178,92,0.78);
+    text-transform: uppercase; font-size: 11px; letter-spacing: 0.42em;
+  }
+  #hud {
+    position: fixed; top: 18px; left: 50%; transform: translateX(-50%);
+    text-align: center; pointer-events: none; user-select: none;
+    font-size: 10px; letter-spacing: 0.42em; text-transform: uppercase;
+    color: rgba(220,210,170,0.32);
+  }
+  #hud b { font-weight: normal; color: rgba(230,205,128,0.72); }
+  #hint {
+    position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%);
+    color: rgba(190,180,150,0.28); font-size: 11px; letter-spacing: 0.28em;
+    text-transform: uppercase; pointer-events: none; white-space: nowrap;
+    transition: opacity 1.2s ease;
+  }
+  #hint.quiet { opacity: 0.18; }
+  #line {
+    position: fixed; left: 50%; top: 62px; transform: translateX(-50%);
+    width: min(360px, 54vw); height: 1px; background: rgba(210,176,92,0.12);
+    pointer-events: none;
+  }
+  #band {
+    position: fixed; top: 56px; left: 50%; transform: translateX(-50%);
+    width: min(360px, 54vw); height: 12px; pointer-events: none;
+  }
+  #band::before {
+    content: ""; position: absolute; left: 32%; right: 32%; top: 5px; height: 1px;
+    background: rgba(218,190,112,0.42); box-shadow: 0 0 12px rgba(218,190,112,0.25);
+  }
+  #mark {
+    position: absolute; top: 2px; width: 7px; height: 7px; border-radius: 50%;
+    background: rgba(230,218,165,0.7); box-shadow: 0 0 14px rgba(230,218,165,0.45);
+    transform: translateX(-50%);
+  }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<div id="veil">
+  <div id="intro">
+    <h1>The Tether</h1>
+    <p>a living light does not stay alive by being still</p>
+    <p>it returns to a pose, leans toward food, and pays for both</p>
+    <p>too little and it gutters. too much and it burns through itself.</p>
+    <div class="start">click to offer your hand</div>
+  </div>
+</div>
+<div id="hud"><b id="state">unwarmed</b></div>
+<div id="line"></div>
+<div id="band"><div id="mark"></div></div>
+<div id="hint">hold near the light to feed - move away and watch it return</div>
+
+<script>
+'use strict';
+
+const TAU = Math.PI * 2;
+const canvas = document.getElementById('stage');
+const ctx = canvas.getContext('2d');
+const veil = document.getElementById('veil');
+const stateEl = document.getElementById('state');
+const markEl = document.getElementById('mark');
+const hintEl = document.getElementById('hint');
+
+let W = 0, H = 0, DPR = Math.min(devicePixelRatio || 1, 2);
+function resize() {
+  W = innerWidth; H = innerHeight;
+  canvas.width = W * DPR; canvas.height = H * DPR;
+  canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  if (!life.started) {
+    life.home.x = W * 0.5; life.home.y = H * 0.54;
+    life.pos.x = life.home.x; life.pos.y = life.home.y;
+  }
+}
+
+let seed = 812371;
+function rand() {
+  seed = (seed * 16807) % 2147483647;
+  return (seed - 1) / 2147483646;
+}
+function noise(t, salt) {
+  return Math.sin(t * 1.271 + salt) * 0.5 + Math.sin(t * 0.417 + salt * 2.19) * 0.32;
+}
+function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+function mix(a, b, t) { return a + (b - a) * t; }
+
+const LOW = 0.30;
+const HIGH = 0.72;
+const CENTER = 0.51;
+const WIDTH = 0.17;
+function aliveness(e) {
+  return Math.exp(-Math.pow((e - CENTER) / WIDTH, 2));
+}
+
+const pointer = {
+  x: -999, y: -999, px: -999, py: -999, vx: 0, vy: 0,
+  down: false, inside: false, still: 0
+};
+
+const life = {
+  started: false,
+  t: 0,
+  energy: 0.38,
+  home: { x: 0, y: 0 },
+  pos: { x: 0, y: 0 },
+  vel: { x: 0, y: 0 },
+  hunger: { x: 0, y: 0 },
+  spent: 0,
+  held: 0,
+  scars: [],
+  memory: [],
+  motes: [],
+  roots: [],
+};
+
+for (let i = 0; i < 520; i++) {
+  life.motes.push({
+    a: rand() * TAU,
+    r: 18 + rand() * 220,
+    z: rand(),
+    ph: rand() * TAU,
+    spin: (rand() - 0.5) * 0.42,
+  });
+}
+
+for (let i = 0; i < 52; i++) {
+  life.roots.push({
+    a: i / 52 * TAU,
+    len: 30 + rand() * 90,
+    sway: rand() * TAU,
+    memory: 0,
+  });
+}
+
+function notePointer(e) {
+  pointer.inside = true;
+  pointer.px = pointer.x; pointer.py = pointer.y;
+  pointer.x = e.clientX; pointer.y = e.clientY;
+  pointer.vx = pointer.x - pointer.px; pointer.vy = pointer.y - pointer.py;
+}
+
+function start(e) {
+  notePointer(e);
+  life.started = true;
+  veil.classList.add('gone');
+  pointer.down = true;
+}
+veil.addEventListener('pointerdown', start);
+window.addEventListener('pointerdown', e => { if (life.started) { notePointer(e); pointer.down = true; } });
+window.addEventListener('pointerup', () => { pointer.down = false; });
+window.addEventListener('pointercancel', () => { pointer.down = false; });
+window.addEventListener('pointermove', e => {
+  notePointer(e);
+});
+window.addEventListener('pointerleave', () => { pointer.inside = false; pointer.down = false; });
+
+function feedAndHunger(dt) {
+  const dx = pointer.x - life.pos.x;
+  const dy = pointer.y - life.pos.y;
+  const dist = Math.hypot(dx, dy);
+  const near = pointer.inside ? clamp(1 - dist / 260, 0, 1) : 0;
+  const handSpeed = Math.hypot(pointer.vx, pointer.vy);
+  pointer.still = handSpeed < 2.2 && near > 0.18 ? pointer.still + dt : Math.max(0, pointer.still - dt * 2.5);
+
+  // Hunger: the set point itself migrates toward the food, slowly and only when fed.
+  const feed = pointer.down ? near : 0;
+  const patience = clamp(pointer.still / 2.2, 0, 1);
+  const hungerRate = feed * (0.018 + 0.05 * patience);
+  if (hungerRate > 0) {
+    const beforeX = life.home.x, beforeY = life.home.y;
+    life.home.x += (pointer.x - life.home.x) * hungerRate * dt;
+    life.home.y += (pointer.y - life.home.y) * hungerRate * dt;
+    const learned = Math.hypot(life.home.x - beforeX, life.home.y - beforeY);
+    if (learned > 0.012) {
+      const last = life.memory[life.memory.length - 1];
+      if (!last || Math.hypot(life.home.x - last.x, life.home.y - last.y) > 3.5) {
+        life.memory.push({
+          x: life.home.x,
+          y: life.home.y,
+          born: life.t,
+          food: feed,
+          still: patience,
+          hue: 38 + patience * 28,
+        });
+        if (life.memory.length > 420) life.memory.shift();
+      }
+    }
+    life.energy -= hungerRate * dt * 0.16; // moving home costs sap
+  }
+
+  // Food: close attention warms it. Too much attention overfills the band.
+  life.energy += feed * dt * (0.24 + 0.38 * patience);
+
+  // Cost: entropy is default, and correction spends more.
+  life.energy -= dt * (0.022 + life.energy * 0.020);
+
+  if (life.energy > HIGH) {
+    const excess = life.energy - HIGH;
+    life.energy -= excess * dt * 0.55;
+    if (rand() < excess * dt * 22) {
+      life.scars.push({
+        x: life.pos.x + (rand() - 0.5) * 34,
+        y: life.pos.y + (rand() - 0.5) * 34,
+        vx: (rand() - 0.5) * 22,
+        vy: -20 - rand() * 40,
+        life: 0,
+        ttl: 2.4 + rand() * 2.8,
+        kind: 'flare',
+      });
+    }
+  }
+  if (life.energy < LOW && rand() < (LOW - life.energy) * dt * 8) {
+    life.scars.push({
+      x: life.pos.x + (rand() - 0.5) * 20,
+      y: life.pos.y + (rand() - 0.5) * 20,
+      vx: (rand() - 0.5) * 8,
+      vy: 10 + rand() * 24,
+      life: 0,
+      ttl: 3 + rand() * 3,
+      kind: 'ash',
+    });
+  }
+  life.energy += (rand() - 0.5) * dt * 0.018;
+  life.energy = clamp(life.energy, 0.05, 0.92);
+}
+
+function returnAndCost(dt) {
+  const alive = aliveness(life.energy);
+  const dx = life.home.x - life.pos.x;
+  const dy = life.home.y - life.pos.y;
+  const dist = Math.hypot(dx, dy);
+  const stiffness = mix(2.2, 7.2, alive);
+  const damping = mix(1.5, 3.9, alive);
+
+  // The cursor is a load, not a command. Moving air bends the body away.
+  let windX = 0, windY = 0;
+  if (pointer.inside) {
+    const pdx = life.pos.x - pointer.x;
+    const pdy = life.pos.y - pointer.y;
+    const pd = Math.hypot(pdx, pdy) || 1;
+    const pressure = clamp(1 - pd / 210, 0, 1);
+    windX += (pdx / pd) * pressure * (pointer.down ? 110 : 48);
+    windY += (pdy / pd) * pressure * (pointer.down ? 70 : 30);
+    windX += pointer.vx * pressure * 5.4;
+    windY += pointer.vy * pressure * 3.2;
+  }
+
+  const ax = dx * stiffness - life.vel.x * damping + windX;
+  const ay = dy * stiffness - life.vel.y * damping + windY;
+  life.vel.x += ax * dt;
+  life.vel.y += ay * dt;
+  const sp = Math.hypot(life.vel.x, life.vel.y);
+  const maxSp = 180 + alive * 120;
+  if (sp > maxSp) {
+    life.vel.x = life.vel.x / sp * maxSp;
+    life.vel.y = life.vel.y / sp * maxSp;
+  }
+  life.pos.x += life.vel.x * dt;
+  life.pos.y += life.vel.y * dt;
+
+  // Correction is paid for. Return is not free.
+  const work = (Math.abs(ax) + Math.abs(ay)) * dt * 0.000035 + sp * dt * 0.00009 + dist * dt * 0.000015;
+  life.energy -= work;
+  life.spent += work;
+
+  life.home.x = clamp(life.home.x, W * 0.16, W * 0.84);
+  life.home.y = clamp(life.home.y, H * 0.24, H * 0.76);
+  life.pos.x = clamp(life.pos.x, 30, W - 30);
+  life.pos.y = clamp(life.pos.y, 40, H - 40);
+}
+
+function stepScars(dt) {
+  const out = [];
+  for (const s of life.scars) {
+    s.life += dt;
+    s.x += s.vx * dt;
+    s.y += s.vy * dt;
+    s.vx *= Math.pow(0.86, dt);
+    s.vy += (s.kind === 'ash' ? 10 : -4) * dt;
+    if (s.life < s.ttl) out.push(s);
+  }
+  life.scars = out.slice(-220);
+}
+
+function step(dt) {
+  life.t += dt;
+  if (!life.started) return;
+  feedAndHunger(dt);
+  returnAndCost(dt);
+  stepScars(dt);
+  const inBand = life.energy > LOW && life.energy < HIGH;
+  life.held = inBand ? life.held + dt : Math.max(0, life.held - dt * 1.2);
+}
+
+function colorForEnergy(e) {
+  if (e < LOW) {
+    const k = clamp((e - 0.05) / (LOW - 0.05), 0, 1);
+    return {
+      hue: mix(222, 274, k),
+      sat: mix(36, 48, k),
+      light: mix(34, 50, k),
+      name: 'guttering'
+    };
+  }
+  if (e > HIGH) {
+    const k = clamp((e - HIGH) / (0.92 - HIGH), 0, 1);
+    return {
+      hue: mix(42, 8, k),
+      sat: mix(68, 92, k),
+      light: mix(62, 76, k),
+      name: 'burning through'
+    };
+  }
+  const k = aliveness(e);
+  return {
+    hue: mix(186, 42, k),
+    sat: mix(42, 70, k),
+    light: mix(48, 64, k),
+    name: life.held > 5 ? 'held and hungry' : 'inside the band'
+  };
+}
+
+function drawCursor() {
+  if (!pointer.inside) return;
+  const a = pointer.down ? 0.38 : 0.15;
+  const r = pointer.down ? 42 : 24;
+  const g = ctx.createRadialGradient(pointer.x, pointer.y, 0, pointer.x, pointer.y, r);
+  g.addColorStop(0, `rgba(245,220,150,${a})`);
+  g.addColorStop(1, 'rgba(245,220,150,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(pointer.x, pointer.y, r, 0, TAU); ctx.fill();
+  ctx.strokeStyle = `rgba(230,210,170,${pointer.down ? 0.32 : 0.16})`;
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(pointer.x, pointer.y, 5, 0, TAU); ctx.stroke();
+}
+
+function drawTether(c, alive) {
+  const dx = life.pos.x - life.home.x;
+  const dy = life.pos.y - life.home.y;
+  const dist = Math.hypot(dx, dy);
+  ctx.strokeStyle = `hsla(${c.hue}, ${c.sat}%, ${c.light}%, ${0.12 + alive * 0.28})`;
+  ctx.lineWidth = 0.8 + alive * 1.2;
+  ctx.beginPath();
+  ctx.moveTo(life.home.x, life.home.y);
+  const sag = clamp(dist / 260, 0, 1) * 30;
+  ctx.quadraticCurveTo((life.home.x + life.pos.x) / 2, (life.home.y + life.pos.y) / 2 + sag, life.pos.x, life.pos.y);
+  ctx.stroke();
+
+  ctx.strokeStyle = `rgba(205,180,110,${0.08 + alive * 0.14})`;
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(life.home.x, life.home.y, 12 + alive * 18, 0, TAU); ctx.stroke();
+  ctx.fillStyle = `rgba(205,180,110,${0.05 + alive * 0.12})`;
+  ctx.beginPath(); ctx.arc(life.home.x, life.home.y, 2.4 + alive * 2, 0, TAU); ctx.fill();
+}
+
+function drawRoots(c, alive) {
+  const inBand = life.energy > LOW && life.energy < HIGH;
+  for (const r of life.roots) {
+    const toward = Math.atan2(pointer.y - life.pos.y, pointer.x - life.pos.x);
+    const hunger = pointer.inside ? Math.cos(r.a - toward) * 0.22 : 0;
+    const a = r.a + Math.sin(life.t * 0.7 + r.sway) * 0.045 + hunger * alive;
+    const len = r.len * (0.35 + alive * 0.9) * (inBand ? 1 : 0.65);
+    const x1 = life.pos.x + Math.cos(a) * 11;
+    const y1 = life.pos.y + Math.sin(a) * 11;
+    const x2 = life.pos.x + Math.cos(a) * len;
+    const y2 = life.pos.y + Math.sin(a) * len;
+    ctx.strokeStyle = `hsla(${c.hue}, ${c.sat}%, ${c.light + 5}%, ${0.04 + alive * 0.18})`;
+    ctx.lineWidth = 0.55 + alive * 0.7;
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.quadraticCurveTo(
+      life.pos.x + Math.cos(a + 0.18) * len * 0.55,
+      life.pos.y + Math.sin(a + 0.18) * len * 0.55,
+      x2, y2
+    );
+    ctx.stroke();
+  }
+}
+
+function drawMotes(c, alive) {
+  const cold = life.energy < LOW ? 1 : 0;
+  const flare = life.energy > HIGH ? clamp((life.energy - HIGH) / (0.92 - HIGH), 0, 1) : 0;
+  for (const m of life.motes) {
+    const spin = m.a + life.t * m.spin * (0.3 + alive) + noise(life.t * 0.8, m.ph) * 0.08;
+    const bandPull = alive * Math.sin(m.z * TAU + life.t * 0.4) * 12;
+    const chaos = flare * (noise(life.t * 5, m.ph) * 70);
+    const collapse = cold * -m.r * 0.42;
+    const rr = m.r + bandPull + chaos + collapse;
+    const x = life.pos.x + Math.cos(spin) * rr * (0.82 + alive * 0.18);
+    const y = life.pos.y + Math.sin(spin) * rr * (0.66 + alive * 0.18);
+    const alpha = 0.035 + alive * 0.12 + flare * 0.08;
+    const size = 0.75 + alive * 1.25 + flare * 0.9;
+    ctx.fillStyle = `hsla(${c.hue + m.z * 26}, ${c.sat}%, ${c.light + m.z * 18}%, ${alpha})`;
+    ctx.beginPath(); ctx.arc(x, y, size, 0, TAU); ctx.fill();
+  }
+}
+
+function drawBody(c, alive) {
+  const heat = life.energy;
+  const glowR = 42 + alive * 78 + heat * 30;
+  const g = ctx.createRadialGradient(life.pos.x, life.pos.y, 0, life.pos.x, life.pos.y, glowR);
+  g.addColorStop(0, `hsla(${c.hue}, ${c.sat}%, ${c.light + 16}%, ${0.40 + alive * 0.32})`);
+  g.addColorStop(0.38, `hsla(${c.hue}, ${c.sat}%, ${c.light}%, ${0.16 + alive * 0.18})`);
+  g.addColorStop(1, `hsla(${c.hue}, ${c.sat}%, ${c.light}%, 0)`);
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(life.pos.x, life.pos.y, glowR, 0, TAU); ctx.fill();
+
+  ctx.fillStyle = `hsla(${c.hue}, ${c.sat}%, ${c.light + 18}%, ${0.65 + alive * 0.25})`;
+  ctx.beginPath(); ctx.arc(life.pos.x, life.pos.y, 6 + alive * 5, 0, TAU); ctx.fill();
+  ctx.strokeStyle = `rgba(255,238,188,${0.12 + alive * 0.4})`;
+  ctx.lineWidth = 0.8 + alive * 1.4;
+  ctx.beginPath(); ctx.arc(life.pos.x, life.pos.y, 14 + alive * 14, 0, TAU); ctx.stroke();
+}
+
+function drawScars() {
+  for (const s of life.scars) {
+    const u = s.life / s.ttl;
+    const a = (1 - u) * (s.kind === 'flare' ? 0.22 : 0.12);
+    ctx.fillStyle = s.kind === 'flare'
+      ? `rgba(255,120,60,${a})`
+      : `rgba(100,125,170,${a})`;
+    ctx.beginPath(); ctx.arc(s.x, s.y, 1.2 + u * 4, 0, TAU); ctx.fill();
+  }
+}
+
+function drawMemory(c, alive) {
+  if (life.memory.length < 2) return;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  for (let i = 1; i < life.memory.length; i++) {
+    const a = life.memory[i - 1];
+    const b = life.memory[i];
+    const age = life.t - b.born;
+    const persistence = clamp(1 - age / 420, 0.08, 1);
+    const learned = clamp((a.food + b.food) * 0.5, 0, 1);
+    const still = clamp((a.still + b.still) * 0.5, 0, 1);
+    const alpha = (0.045 + still * 0.09 + alive * 0.04) * persistence;
+    const lift = Math.sin(i * 1.7 + life.t * 0.18) * (1.5 + still * 2.5);
+    ctx.strokeStyle = `hsla(${mix(c.hue, b.hue, 0.65)}, ${mix(c.sat, 70, 0.45)}%, ${mix(c.light, 62, 0.55)}%, ${alpha})`;
+    ctx.lineWidth = 0.8 + learned * 1.8 + still * 1.15;
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y + lift);
+    ctx.lineTo(b.x, b.y - lift * 0.35);
+    ctx.stroke();
+  }
+
+  for (let i = 0; i < life.memory.length; i += 9) {
+    const m = life.memory[i];
+    const age = life.t - m.born;
+    const persistence = clamp(1 - age / 420, 0.08, 1);
+    const alpha = (0.04 + m.still * 0.11) * persistence;
+    ctx.fillStyle = `hsla(${m.hue}, 72%, 64%, ${alpha})`;
+    ctx.beginPath();
+    ctx.arc(m.x, m.y, 1.1 + m.still * 2.2, 0, TAU);
+    ctx.fill();
+  }
+}
+
+function draw() {
+  ctx.fillStyle = 'rgba(3,5,9,0.28)';
+  ctx.fillRect(0, 0, W, H);
+
+  if (!life.started) return;
+  const alive = aliveness(life.energy);
+  const c = colorForEnergy(life.energy);
+  stateEl.textContent = c.name;
+  markEl.style.left = `${clamp(life.energy, 0, 1) * 100}%`;
+  hintEl.classList.toggle('quiet', life.held > 6);
+
+  const bg = ctx.createRadialGradient(W/2, H/2, 0, W/2, H/2, Math.max(W,H)*0.65);
+  bg.addColorStop(0, `hsla(${c.hue}, ${c.sat}%, ${c.light}%, ${0.018 + alive * 0.045})`);
+  bg.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = bg; ctx.fillRect(0,0,W,H);
+
+  drawScars();
+  drawTether(c, alive);
+  drawMotes(c, alive);
+  drawMemory(c, alive);
+  drawRoots(c, alive);
+  drawBody(c, alive);
+  drawCursor();
+}
+
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  step(dt);
+  draw();
+  requestAnimationFrame(frame);
+}
+
+window.addEventListener('resize', resize);
+resize();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
