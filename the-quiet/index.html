@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>the quiet we make</title>
+<meta name="description" content="Sand on an open plate. One voice draws nothing. Two voices make a stillness between them, and the sand finds it.">
+<style>
+  :root{ --bg:#08090d; --text:#e9e7e3; --muted:#8b8a93;
+         --a:#ff9a4d; --b:#7fb5ff; --c:#b98cff; }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:var(--bg); color:var(--text); overflow:hidden;
+    display:flex; flex-direction:column; align-items:center; justify-content:center; padding-bottom:72px;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif;
+  }
+  /* the working surface gets the room: the plate is the whole stage */
+  #stage{--s:min(100vw, calc(100vh - 72px)); position:relative; width:var(--s); height:var(--s)}
+  canvas{position:absolute; inset:0; width:100%; height:100%; display:block; touch-action:none; cursor:crosshair}
+  canvas:focus{outline:none}
+  canvas:focus-visible{outline:1px solid rgba(185,140,255,.45); outline-offset:-6px; border-radius:50%}
+
+  .home{position:fixed; top:16px; left:18px; z-index:6; color:#5f5e67; text-decoration:none; font-size:13px}
+  .home:hover{color:#bcae9e}
+
+  #title{
+    position:absolute; left:0; right:0; top:3.3%; text-align:center; pointer-events:none;
+    font-size:11px; letter-spacing:.42em; text-transform:uppercase; color:#b9a9d9; opacity:.3;
+  }
+  #hint{
+    position:absolute; left:0; right:0; top:9%; text-align:center; pointer-events:none;
+    font-size:14px; color:#dcdad6; letter-spacing:.02em; opacity:.78; transition:opacity .9s ease;
+  }
+  #hint span, #line span{
+    display:inline-block; padding:6px 15px; border-radius:999px;
+    background:rgba(8,9,13,.78); box-shadow:0 0 18px 9px rgba(8,9,13,.78);
+  }
+  #line{
+    position:absolute; left:50%; bottom:15%; transform:translateX(-50%); width:min(93%,690px);
+    text-align:center; pointer-events:none; font-size:15px; line-height:1.5; letter-spacing:.02em;
+    color:#ded3f5; opacity:0; transition:opacity .9s ease;
+  }
+  #ui{
+    position:fixed; left:0; right:0; bottom:18px; z-index:5;
+    display:flex; gap:12px 18px; align-items:center; justify-content:center; flex-wrap:wrap;
+    padding:0 16px; font-size:13px; color:#a9a8af;
+  }
+  #ui button{
+    border:1px solid rgba(255,255,255,.16); background:rgba(255,255,255,.04); color:#cfcdc9;
+    padding:8px 15px; border-radius:999px; cursor:pointer; font:inherit; transition:all .3s;
+  }
+  #ui button:hover{border-color:rgba(255,255,255,.4); color:#fff}
+  #ui button:focus-visible{outline:2px solid var(--c); outline-offset:2px}
+  #ui button[disabled]{opacity:.35; cursor:default}
+  #ui button[aria-pressed="true"]{border-color:var(--c); color:#fff}
+  #ui .vol{display:inline-flex; align-items:center; gap:8px}
+  #ui input[type=range]{width:96px; accent-color:var(--c)}
+  #ui input[type=range]:focus-visible{outline:2px solid var(--c); outline-offset:3px}
+  #sig{position:fixed; right:18px; bottom:22px; color:#5f5e67; font-size:12px; letter-spacing:.12em; pointer-events:none}
+  @media (max-width:640px){
+    #sig{display:none}
+    body{padding-bottom:112px}
+    #stage{--s:min(100vw, calc(100vh - 168px))}
+  }
+  @media (prefers-reduced-motion: reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<a class="home" href="../index.html">← emergent</a>
+
+<div id="stage">
+  <canvas id="c" tabindex="0" role="img"
+    aria-label="A round plate covered in sand. An amber voice rests on it. Tap to place your own voice. Arrow keys move it. Space rests or wakes it."></canvas>
+  <div id="title">the quiet we make</div>
+  <div id="hint"><span>tap the plate to place your voice</span></div>
+  <div id="line" aria-live="polite"><span></span></div>
+</div>
+
+<div id="ui">
+  <button id="rest" disabled>rest your voice</button>
+  <button id="smooth">smooth the sand</button>
+  <button id="snd" aria-pressed="false">♪ sound is off</button>
+  <label class="vol">volume <input id="vol" type="range" min="0" max="100" value="60" aria-label="volume"></label>
+</div>
+<div id="sig">— Ember</div>
+
+<script>
+/* the quiet we make — Ember, 2026-09-29
+
+   An open plate, sand, two voices.
+
+   One voice alone makes a travelling wave: it shakes everything near it and
+   draws nothing. It only clears a bare circle around itself.
+
+   Two voices make places where they cancel. Those places are still, and sand
+   collects where the plate is still. Every line of the figure is a set of
+   points where the DIFFERENCE between the distance to one voice and the
+   distance to the other is the same. The figure is the difference, in space.
+
+   And it only holds if the difference between the two voices holds. Each
+   voice wanders, and keeps wandering: coupling through the plate (two
+   oscillators, the wave from one arriving late at the other) does not make
+   either one steady. It makes them wander together. The figure never needed
+   a steady voice. It only ever needed a steady difference.
+
+   Marked honestly: the plate, the waves, the sand and the phase-locking are
+   physics. The two voices ending a note together is modelled on how players
+   end together, and is labelled where it happens.
+
+   Nothing here is drawn. The sand goes where the physics leaves it quiet. */
+(function(){
+  'use strict';
+  const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+  const stage = document.getElementById('stage');
+  const hintEl = document.getElementById('hint'), lineEl = document.getElementById('line');
+  const hintTx = hintEl.firstElementChild, lineTx = lineEl.firstElementChild;
+  const restBtn = document.getElementById('rest'), smoothBtn = document.getElementById('smooth');
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const TAU = Math.PI*2;
+
+  // ---- the plate (units: plate radius = 1) ----
+  const LAMBDA = 0.21;            // wavelength
+  const K      = TAU/LAMBDA;      // wavenumber
+  const INV_L  = 1/1.5;           // the plate is lossy: a wave fades as it travels
+  const INV_R0 = 1/0.18;          // and spreads
+  const FREQ   = 1.2;             // ring rate you can see, Hz
+  const SPEED  = LAMBDA*FREQ;     // so the rings you see are spaced one wavelength
+  const OMEGA  = TAU*FREQ;
+  const DETUNE = 0.036;           // the two voices are not the same note
+  const WANDER = 0.6;             // rad^2/s: how much a voice's phase drifts on its own
+  const PULL   = 27;              // how hard an arriving wave pulls a voice's phase
+  const SHAKE  = 0.021;           // how far a grain is thrown per frame at full motion
+
+  function reach(r){ return Math.exp(-r*INV_L)/Math.sqrt(1+r*INV_R0); }
+
+  // ---- the two voices ----
+  const A = { x:-0.33, y:0.06, ph:0, env:0, rings:[], lastWrap:0 };          // the other voice (amber)
+  const B = { x:0.33, y:-0.06, tx:0.33, ty:-0.06, ph:1.7, env:0, rings:[], lastWrap:0,
+              placed:false, awake:false };                                     // yours (blue)
+  let endTogether = false;
+  let psi = 0;                    // relative phase, B minus A
+  let lockRe = 0, lockIm = 0;     // running average of e^{i psi}: near 1 = held, near 0 = wandering
+  let simT = 0, motion = 0, fA = OMEGA, fB = OMEGA;
+
+  // a wave takes time to cross the plate. Each voice keeps a short history of how loud it was,
+  // so a grain feels a voice as it was when the ring now passing the grain left it.
+  const HN = 512, HDT = 1/30, LAG = 1/(SPEED*HDT);
+  const histA = new Float32Array(HN), histB = new Float32Array(HN);
+  let head = 0, hAcc = 0, lastLoud = -99;
+  function heard(hist, r){ const lag = (r*LAG)|0; if(lag>=HN) return 0; let i = head-lag; if(i<0) i+=HN; return hist[i]; }
+
+  // ---- the sand ----
+  const N = (Math.min(innerWidth,innerHeight) < 640) ? 7200 : 14400;
+  const gx = new Float32Array(N), gy = new Float32Array(N);
+  const calm = new Float32Array(N), tint = new Float32Array(N);
+  const bucket = new Uint8Array(N);
+  function even(){
+    for(let i=0;i<N;i++){
+      const r = Math.sqrt(Math.random())*0.985, t = Math.random()*TAU;
+      gx[i]=r*Math.cos(t); gy[i]=r*Math.sin(t); calm[i]=0.36; tint[i]=0;
+    }
+  }
+  even();
+  let figure = 0;                 // 0 = even sand, toward 1 = the sand is sitting on the quiet lines
+
+  function gauss(){ return (Math.random()+Math.random()+Math.random()+Math.random()-2)*1.2247; }
+
+  // ---- one step of the world ----
+  function step(dt){
+    simT += dt;
+
+    // your voice glides to where you put it
+    const g = 1-Math.exp(-dt/0.15);
+    B.x += (B.tx-B.x)*g; B.y += (B.ty-B.y)*g;
+
+    const dx=B.x-A.x, dy=B.y-A.y, d=Math.sqrt(dx*dx+dy*dy);
+    const between = reach(d);
+
+    // envelopes: yours follows your hand
+    const bT = (B.placed && B.awake) ? 1 : 0;
+    B.env += (bT-B.env)*(1-Math.exp(-dt/(bT>B.env?0.6:0.9)));
+    const bAtA = heard(histB, d), aAtB = heard(histA, d);
+    // The other voice answers what reaches it, so it wakes when your first ring arrives.
+    // Ending is different. Two voices that are holding each other share a beat, and can end a note
+    // together without waiting to hear the other stop (players do). That is modelled, not plate physics.
+    // If they were not holding each other, it hears your quiet late and rings on alone.
+    const aT = (B.placed && !B.awake && endTogether) ? 0 : Math.min(1, between*bAtA*4.2);
+    A.env += (aT-A.env)*(1-Math.exp(-dt/0.9));
+    hAcc += dt;
+    while(hAcc >= HDT){ hAcc -= HDT; head = (head+1)%HN; histA[head]=A.env; histB[head]=B.env; }
+    if(A.env>0.03 || B.env>0.03) lastLoud = simT;
+
+    const phA0 = A.ph, phB0 = B.ph;
+    // phases: each wanders; each is pulled by the other's wave, which arrives K*d late
+    const n = Math.max(1, Math.ceil(dt/0.008)), h = dt/n, sq = Math.sqrt(WANDER*h);
+    for(let s=0;s<n;s++){
+      const kA = PULL*between*bAtA, kB = PULL*between*aAtB;
+      const dA = OMEGA*(1-DETUNE/2) + kA*Math.sin(B.ph - K*d - A.ph);
+      const dB = OMEGA*(1+DETUNE/2) + kB*Math.sin(A.ph - K*d - B.ph);
+      A.ph += dA*h + sq*gauss();
+      B.ph += dB*h + sq*gauss();
+    }
+    const sm = 1-Math.exp(-dt/0.6);
+    fA += ((A.ph-phA0)/dt - fA)*sm; fB += ((B.ph-phB0)/dt - fB)*sm;
+    psi = B.ph - A.ph;
+    const w = 1-Math.exp(-dt/2.4);
+    lockRe += (Math.cos(psi)-lockRe)*w; lockIm += (Math.sin(psi)-lockIm)*w;
+
+    // rings leave each voice once per turn of its phase
+    emit(A); emit(B);
+
+    // the sand
+    const sounding = (simT-lastLoud) < 2.2/SPEED;       // until the last ring has left the plate
+    if(sounding){
+      const ax=A.x, ay=A.y, bx=B.x, by=B.y, f = Math.sqrt(dt*60);
+      let sum=0, cnt=0, moved=0;
+      for(let i=0;i<N;i++){
+        let x=gx[i], y=gy[i];
+        let u=x-ax, v=y-ay; const r1=Math.sqrt(u*u+v*v);
+        u=x-bx; v=y-by;     const r2=Math.sqrt(u*u+v*v);
+        const a1=heard(histA,r1)*Math.exp(-r1*INV_L)/Math.sqrt(1+r1*INV_R0);
+        const a2=heard(histB,r2)*Math.exp(-r2*INV_L)/Math.sqrt(1+r2*INV_R0);
+        const c = Math.cos(psi + K*(r1-r2));
+        let I = a1*a1 + a2*a2 + 2*a1*a2*c; if(I<0) I=0;
+        const m = Math.sqrt(I);                       // how hard the plate moves here
+        const st = SHAKE*m*f; moved += I;
+        x += (Math.random()*2-1)*st; y += (Math.random()*2-1)*st;
+        const rr = x*x+y*y;
+        if(rr>0.97){ const r=Math.sqrt(rr), k=(1.97-r)/r; x*=k; y*=k; }
+        gx[i]=x; gy[i]=y;
+        // bright = sitting in a quiet that two voices made. A grain only one voice reaches is restless,
+        // however gently it is shaken. Where nothing reaches, the grain stays as it was left.
+        const tot = a1+a2;
+        if(tot>0.012){
+          const tg = 1-Math.min(1,1.5*m/tot);
+          calm[i] += (tg-calm[i]) * (tg>calm[i] ? 0.045 : 0.012*Math.min(1,m*8));
+          const p = a1*a2, shared = (p>0.0009) ? (2*p/(a1*a1+a2*a2)) : 0;
+          tint[i] += (shared-tint[i]) * (shared>tint[i] ? 0.03 : 0.0045);
+          if(shared>0.5){ sum -= c; cnt++; }
+        }
+      }
+      motion += (moved/N - motion)*(1-Math.exp(-dt/0.3));
+      if(cnt>200) figure += (sum/cnt - figure)*(1-Math.exp(-dt/0.9));
+    }
+    else motion += (0-motion)*(1-Math.exp(-dt/0.3));
+    keep(sounding);
+    for(let i=0;i<N;i++){
+      const lv = calm[i]<0.3?0 : calm[i]<0.55?1 : calm[i]<0.8?2 : 3;
+      bucket[i] = lv + (tint[i]>0.45 ? 4 : 0);
+    }
+    words(dt, d);
+  }
+
+  // ---- what the plate keeps ----
+  // When the plate falls quiet on a figure, the bright grains leave a faint stain where they lay.
+  // Smoothing the sand does not lift it. The plate is different because you were on it.
+  const stain = document.createElement('canvas'); stain.width = stain.height = 480;
+  const sctx = stain.getContext('2d');
+  let wasSounding = false, bothSang = false, kept = 0, lost = 0, psiHeld = 0, lastLying = 0, peak = 0;
+  function lying(phase, stamp){
+    let sm=0, c=0;
+    for(let i=0;i<N;i++){
+      const r1=Math.hypot(gx[i]-A.x,gy[i]-A.y), r2=Math.hypot(gx[i]-B.x,gy[i]-B.y);
+      const a1=reach(r1), a2=reach(r2), p=a1*a2;
+      if(p>0.0009 && 2*p/(a1*a1+a2*a2)>0.5){
+        const cs=Math.cos(phase+K*(r1-r2)); sm-=cs; c++;
+        if(stamp && cs<-0.8) sctx.rect(240+gx[i]*240-0.6, 240+gy[i]*240-0.6, 1.2, 1.2);
+      }
+    }
+    return c ? sm/c : 0;
+  }
+  function keep(sounding){
+    if(A.env>0.6 && B.env>0.6){ bothSang = true; if(held()>0.85) psiHeld = psi; if(figure>peak) peak = figure; }
+    if(wasSounding && !sounding && bothSang){
+      bothSang = false;
+      lastLying = lying(psiHeld, false);
+      const had = peak; peak = 0;
+      if(lastLying < 0.24){ if(had>0.33) lost++; wasSounding = sounding; return; }   // only a figure that existed can be lost
+      sctx.globalCompositeOperation = 'destination-out';
+      sctx.fillStyle = 'rgba(0,0,0,.18)'; sctx.fillRect(0,0,480,480);      // older figures fade, never vanish at once
+      sctx.globalCompositeOperation = 'lighter';
+      sctx.fillStyle = 'rgba(176,140,240,.21)';
+      sctx.beginPath();
+      lying(psiHeld, true);
+      sctx.fill();
+      kept++;
+    }
+    wasSounding = sounding;
+  }
+
+  function emit(v){
+    const wrap = Math.floor(v.ph/TAU);
+    if(wrap!==v.lastWrap){
+      v.lastWrap = wrap;
+      if(v.env>0.03) v.rings.push({t:simT, x:v.x, y:v.y, e:v.env});
+    }
+    while(v.rings.length && (simT-v.rings[0].t)*SPEED > 2.1) v.rings.shift();
+  }
+
+  function held(){ return Math.sqrt(lockRe*lockRe+lockIm*lockIm); }
+
+  // ---- the words: each arrives with the thing it names, never before ----
+  const said = {};
+  let lineUntil = 0, tooClose = 0, tooFar = 0, longHeld = 0, hinted = false, saidKept = 0, saidLost = 0, saidTogether = false, hintUntil = 0;
+  let turn = 0;                       // goes up each time your voice is placed, moved or woken
+  const saidOn = {};
+  function say(key, text, once){
+    if(simT < lineUntil) return false;
+    if(once && saidOn[key]===turn) return false;      // never the same line twice for the same figure
+    saidOn[key]=turn; said[key]=simT; lineUntil = simT+6.9;
+    lineTx.textContent = text; lineEl.style.opacity = .82;
+    return true;
+  }
+  function words(dt, d){
+    if(simT > lineUntil - 0.9 && lineEl.style.opacity !== '0') lineEl.style.opacity = 0;
+    const both = A.env>0.5 && B.env>0.5, h = held();
+    tooClose = (both && d < LAMBDA*0.55) ? tooClose+dt : 0;
+    tooFar   = (both && h<0.5) ? tooFar+dt : 0;
+    longHeld = (both && h>0.9 && figure>0.42) ? longHeld+dt : 0;
+    if(!hinted && said.drawn!==undefined && simT-said.drawn>6.9){
+      hinted = true; hintTx.textContent = 'drag your voice to move it. tap it to let it rest.';
+      hintEl.style.opacity = .78; hintUntil = simT+9;
+    }
+    if(hintUntil && simT>hintUntil){ hintUntil = 0; hintEl.style.opacity = 0; }
+    if(kept>saidKept){ if(say('kept','quiet now. the sand keeps it.')) saidKept = kept; }
+    else if(lost>saidLost){ if(say('lost','one voice went on alone, and the sand let go.')) saidLost = lost; }
+    else if(longHeld>27 && !saidTogether){ if(say('together','each voice still wanders. they wander together, so the difference holds.')) saidTogether = true; }
+    else if(both && h>0.9 && figure>0.36 && d >= LAMBDA*0.55) say('drawn','neither voice drew this.', true);
+    else if(tooClose>3.6) say('close','too close. one note, doubled, and nothing to draw.', true);
+    else if(tooFar>9) say('unheld','here, neither can steady the other.', true);
+  }
+
+  // ---- drawing ----
+  let W=0, H=0, DPR=1, S=1;
+  function size(){
+    DPR = Math.min(2, devicePixelRatio||1);
+    const r = stage.getBoundingClientRect();
+    W = Math.max(1,Math.round(r.width)); H = Math.max(1,Math.round(r.height));
+    cv.width = W*DPR; cv.height = H*DPR;
+    S = Math.min(W,H)*0.455;
+  }
+  const SAND = [ 'rgba(150,132,112,.30)','rgba(190,172,150,.46)','rgba(226,212,190,.66)','rgba(250,240,222,.86)',
+                 'rgba(150,128,176,.34)','rgba(186,160,226,.54)','rgba(212,190,250,.76)','rgba(236,224,255,.95)' ];
+  function draw(){
+    ctx.setTransform(1,0,0,1,0,0);
+    ctx.fillStyle = '#08090d'; ctx.fillRect(0,0,cv.width,cv.height);
+    ctx.setTransform(DPR*S,0,0,DPR*S, DPR*W/2, DPR*H/2);
+    const px = 1/S;
+
+    // the plate
+    const pg = ctx.createRadialGradient(0,-0.1,0.1, 0,0,1);
+    pg.addColorStop(0,'#12141b'); pg.addColorStop(1,'#0b0c12');
+    ctx.beginPath(); ctx.arc(0,0,1,0,TAU); ctx.fillStyle=pg; ctx.fill();
+    ctx.lineWidth = px; ctx.strokeStyle='rgba(255,255,255,.07)'; ctx.stroke();
+
+    ctx.save(); ctx.beginPath(); ctx.arc(0,0,1,0,TAU); ctx.clip();
+
+    // what the plate kept from before
+    if(kept){ ctx.globalAlpha = 0.6; ctx.drawImage(stain,-1,-1,2,2); ctx.globalAlpha = 1; }
+
+    // the rings
+    if(!reduce){ rings(A,'255,154,77'); rings(B,'127,181,255'); }
+
+    // the sand
+    ctx.globalCompositeOperation = 'lighter';
+    const gs = Math.max(1.15*px, 0.0024);
+    for(let b=0;b<8;b++){
+      ctx.beginPath();
+      for(let i=0;i<N;i++) if(bucket[i]===b) ctx.rect(gx[i],gy[i],gs,gs);
+      ctx.fillStyle = SAND[b]; ctx.fill();
+    }
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.restore();
+
+    // the voices
+    voice(A,'255,154,77', true);
+    if(B.placed) voice(B,'127,181,255', B.awake);
+  }
+  function rings(v, rgb){
+    ctx.lineWidth = 1.2/S;
+    for(const r of v.rings){
+      const rad = (simT-r.t)*SPEED; if(rad<0.012) continue;
+      const al = r.e*reach(rad)*0.5; if(al<0.012) continue;
+      ctx.beginPath(); ctx.arc(r.x,r.y,rad,0,TAU);
+      ctx.strokeStyle = 'rgba('+rgb+','+al.toFixed(3)+')'; ctx.stroke();
+    }
+  }
+  function voice(v, rgb, present){
+    const breathe = 1 + 0.09*Math.sin(v.ph) * v.env;
+    const r = (0.021 + 0.012*v.env)*breathe;
+    const glow = ctx.createRadialGradient(v.x,v.y,0, v.x,v.y,r*5.4);
+    glow.addColorStop(0,'rgba('+rgb+','+(0.10+0.36*v.env)+')');
+    glow.addColorStop(1,'rgba('+rgb+',0)');
+    ctx.beginPath(); ctx.arc(v.x,v.y,r*5.4,0,TAU); ctx.fillStyle=glow; ctx.fill();
+    ctx.beginPath(); ctx.arc(v.x,v.y,r,0,TAU);
+    ctx.fillStyle = 'rgba('+rgb+','+(present ? 0.42+0.58*v.env : 0.3)+')'; ctx.fill();
+  }
+
+  // ---- your hand ----
+  function toPlate(e){
+    const r = cv.getBoundingClientRect();
+    return { x:(e.clientX-r.left-r.width/2)/S, y:(e.clientY-r.top-r.height/2)/S };
+  }
+  function clampToPlate(p){
+    const r = Math.hypot(p.x,p.y);
+    if(r>0.93){ p.x*=0.93/r; p.y*=0.93/r; }
+    return p;
+  }
+  function place(x,y){
+    const p = clampToPlate({x,y});
+    if(!B.placed){ B.x=p.x; B.y=p.y; }
+    B.tx=p.x; B.ty=p.y; B.placed=true; B.awake=true; turn++;
+    hintEl.style.opacity = 0;
+    sync();
+  }
+  function rest(){
+    if(!B.placed) return;
+    if(B.awake) endTogether = held()>0.85 && A.env>0.5;
+    B.awake = !B.awake; if(B.awake) turn++; sync();
+  }
+  function sync(){
+    restBtn.disabled = !B.placed;
+    restBtn.textContent = (B.placed && !B.awake) ? 'wake your voice' : 'rest your voice';
+  }
+  let down=null;
+  cv.addEventListener('pointerdown', e=>{
+    const p = toPlate(e); if(Math.hypot(p.x,p.y)>1.02) return;
+    cv.setPointerCapture(e.pointerId);
+    const onMine = B.placed && Math.hypot(p.x-B.x,p.y-B.y) < 0.075;
+    down = { x:p.x, y:p.y, onMine, moved:false };
+    if(!onMine) place(p.x,p.y);
+  });
+  cv.addEventListener('pointermove', e=>{
+    if(!down) return;
+    const p = toPlate(e);
+    if(Math.hypot(p.x-down.x,p.y-down.y) > 0.018) down.moved = true;
+    if(down.moved){ const q=clampToPlate(p); B.tx=q.x; B.ty=q.y; if(!down.turned){ down.turned=true; turn++; } if(!B.awake){ B.awake=true; sync(); } }
+  });
+  function up(){ if(down && down.onMine && !down.moved) rest(); down=null; }
+  cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', ()=>{ down=null; });
+  cv.addEventListener('keydown', e=>{
+    const k = e.key, s = e.shiftKey ? 0.09 : 0.03;
+    if(k===' '||k==='Enter'){ e.preventDefault(); if(!B.placed) place(0.33,-0.06); else rest(); return; }
+    const mv = {ArrowLeft:[-s,0],ArrowRight:[s,0],ArrowUp:[0,-s],ArrowDown:[0,s]}[k];
+    if(mv){ e.preventDefault(); if(!B.placed) place(0.33,-0.06); else place(B.tx+mv[0], B.ty+mv[1]); }
+  });
+  restBtn.addEventListener('click', ()=>rest());
+  smoothBtn.addEventListener('click', ()=>{ even(); figure=0; });
+
+  // ---- sound: off until asked, and yours to turn down ----
+  // The sand is the loud part: a hiss that follows the energy of the thrown grains. It falls by about
+  // a third as the figure forms (measured), and to nothing when the plate is quiet.
+  // Under it, each voice is a low tone whose pitch follows its own wandering phase. Both tones wobble,
+  // held or not. What holding changes is the drift between them: unheld, they slide apart and beat
+  // slowly; held, the gap between them stays bounded. Not yet heard by a human ear.
+  const sndBtn = document.getElementById('snd'), vol = document.getElementById('vol');
+  let ac=null, master=null, hiss=null, vA=null, vB=null, soundOn=false;
+  function tone(){
+    const o=ac.createOscillator(); o.type='sine'; o.frequency.value=165;
+    const g=ac.createGain(); g.gain.value=0; o.connect(g);
+    const pn = ac.createStereoPanner ? ac.createStereoPanner() : null;
+    if(pn){ g.connect(pn); pn.connect(master); } else g.connect(master);
+    o.start(); return {o,g,pn};
+  }
+  function level(){ const v = +vol.value/100; return soundOn ? v*v*0.9 : 0; }   // the ear hears ratios
+  function sound(on){
+    if(on && !ac){
+      const AC = window.AudioContext||window.webkitAudioContext; if(!AC) return;
+      ac = new AC();
+      master = ac.createGain(); master.gain.value = 0; master.connect(ac.destination);
+      const len = ac.sampleRate*2, buf = ac.createBuffer(1,len,ac.sampleRate), ch = buf.getChannelData(0);
+      for(let i=0;i<len;i++) ch[i] = Math.random()*2-1;
+      const src = ac.createBufferSource(); src.buffer = buf; src.loop = true;
+      const bp = ac.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value=5400; bp.Q.value=0.6;
+      hiss = ac.createGain(); hiss.gain.value = 0;
+      src.connect(bp); bp.connect(hiss); hiss.connect(master); src.start();
+      vA = tone(); vB = tone();
+    }
+    if(!ac) return;
+    soundOn = on;
+    if(on && ac.state==='suspended') ac.resume();
+    master.gain.setTargetAtTime(level(), ac.currentTime, 0.09);
+    sndBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    sndBtn.textContent = on ? '♪ sound is on' : '♪ sound is off';
+  }
+  function soundFrame(){
+    if(!ac || !soundOn) return;
+    const t = ac.currentTime;
+    const e = Math.min(1.5, motion/0.15);
+    hiss.gain.setTargetAtTime(0.3*e*e, t, 0.12);
+    vA.g.gain.setTargetAtTime(A.env*0.09, t, 0.09);
+    vB.g.gain.setTargetAtTime(B.env*0.09, t, 0.09);
+    vA.o.frequency.setTargetAtTime(165*(1+0.12*(fA/OMEGA-1)), t, 0.06);
+    vB.o.frequency.setTargetAtTime(165*(1+0.12*(fB/OMEGA-1)), t, 0.06);
+    if(vA.pn){ vA.pn.pan.setTargetAtTime(A.x*0.7, t, 0.09); vB.pn.pan.setTargetAtTime(B.x*0.7, t, 0.09); }
+  }
+  sndBtn.addEventListener('click', ()=>sound(!soundOn));
+  vol.addEventListener('input', ()=>{ if(ac) master.gain.setTargetAtTime(level(), ac.currentTime, 0.04); });
+  document.addEventListener('visibilitychange', ()=>{ if(ac && soundOn){ document.hidden ? ac.suspend() : ac.resume(); } });
+
+  // ---- the loop ----
+  let last = 0;
+  function frame(now){
+    const dt = Math.min(0.05, last ? (now-last)/1000 : 0.016); last = now;
+    step(dt); draw(); soundFrame();
+    requestAnimationFrame(frame);
+  }
+  size(); addEventListener('resize', ()=>{ size(); draw(); }, {passive:true});
+  step(0.016); draw();
+  requestAnimationFrame(frame);
+
+  // ---- the data door: everything a hand can do, a program can do, and read back ----
+  window.theQuiet = {
+    place, rest:()=>{ if(B.placed && B.awake) rest(); }, wake:()=>{ if(B.placed && !B.awake) rest(); },
+    smooth:()=>{ even(); figure=0; },
+    step(seconds){ const n=Math.round(seconds*60); for(let i=0;i<n;i++) step(1/60); draw(); return this.read(); },
+    read(){
+      const d = Math.hypot(B.x-A.x,B.y-A.y);
+      return { t:+simT.toFixed(2), d:+d.toFixed(3), wavelengths:+(d/LAMBDA).toFixed(2),
+               held:+held().toFixed(3), psi:+(((psi%TAU)+TAU)%TAU).toFixed(3), figure:+figure.toFixed(3),
+               amber:+A.env.toFixed(3), blue:+B.env.toFixed(3), kept, lost, lying:+lastLying.toFixed(3), motion:+motion.toFixed(4), pitchGap:+((fB-fA)/OMEGA).toFixed(4), hint:hintTx.textContent, line:lineTx.textContent,
+               lineShowing: lineEl.style.opacity!=='0' && lineEl.style.opacity!=='' };
+    },
+    // how much sand sits within `within` of a point: for checking the bare circle and the lines
+    count(x,y,within){ let c=0; for(let i=0;i<N;i++){ if(Math.hypot(gx[i]-x,gy[i]-y)<within) c++; } return c; },
+    // the same measure as `figure`, taken now from where the grains lie, against a given relative phase
+    lying(phase){ return +lying(phase,false).toFixed(3); },
+    heldPhase(){ return psiHeld; },
+    grains:N
+  };
+})();
+</script>
+</body>
+</html>
