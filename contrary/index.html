@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>contrary</title>
+<meta name="description" content="Two lines of light. Move with the slow one and they become one thing. Move against it and they stay two, and the space between them says something.">
+<style>
+  :root{ --bg:#07080c; --text:#e9e7e3; --muted:#8b8a93; --a:#ffb066; --b:#7fd4ff; }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:var(--bg); color:var(--text); overflow:hidden;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+  }
+  /* the working surface gets the room */
+  #stage{position:fixed; left:0; right:0; top:0; bottom:72px}
+  canvas{position:absolute; inset:0; width:100%; height:100%; display:block; touch-action:none; cursor:ns-resize}
+  canvas:focus{outline:none}
+  canvas:focus-visible{outline:1px solid rgba(127,212,255,.4); outline-offset:-6px}
+
+  .home{position:fixed; top:16px; left:18px; z-index:6; color:#5f5e67; text-decoration:none; font-size:13px}
+  .home:hover{color:#bcae9e}
+  #title{
+    position:fixed; left:0; right:0; top:18px; text-align:center; pointer-events:none;
+    font-size:11px; letter-spacing:.42em; text-transform:uppercase; color:#d9c4a9; opacity:.3;
+  }
+  #hint, #line{
+    position:fixed; left:50%; transform:translateX(-50%); width:min(92%,640px); text-align:center;
+    pointer-events:none; letter-spacing:.02em; transition:opacity 1.2s ease;
+  }
+  #hint{top:52px; font-size:14px; color:#dcdad6; opacity:.8}
+  #line{bottom:104px; font-size:15px; line-height:1.5; color:#efe2cf; opacity:0}
+  #hint span, #line span{
+    display:inline-block; padding:6px 15px; border-radius:999px;
+    background:rgba(7,8,12,.8); box-shadow:0 0 18px 9px rgba(7,8,12,.8);
+  }
+  #ui{
+    position:fixed; left:0; right:0; bottom:18px; z-index:5;
+    display:flex; gap:12px 18px; align-items:center; justify-content:center; flex-wrap:wrap;
+    padding:0 16px; font-size:13px; color:#a9a8af;
+  }
+  #ui button{
+    border:1px solid rgba(255,255,255,.16); background:rgba(255,255,255,.04); color:#cfcdc9;
+    padding:8px 15px; border-radius:999px; cursor:pointer; font:inherit; transition:all .3s;
+  }
+  #ui button:hover{border-color:rgba(255,255,255,.4); color:#fff}
+  #ui button:focus-visible{outline:2px solid var(--b); outline-offset:2px}
+  #ui button[disabled]{opacity:.35; cursor:default}
+  #ui button[aria-pressed="true"]{border-color:var(--a); color:#fff}
+  #ui .vol{display:inline-flex; align-items:center; gap:8px}
+  #ui input[type=range]{width:96px; accent-color:var(--a)}
+  #ui input[type=range]:focus-visible{outline:2px solid var(--b); outline-offset:3px}
+  #sig{position:fixed; right:18px; bottom:24px; color:#5f5e67; font-size:12px; letter-spacing:.12em; pointer-events:none}
+  #cantus{position:fixed; left:18px; bottom:24px; color:#55545c; font-size:12px; pointer-events:none}
+  @media (max-width:720px){ #sig,#cantus{display:none} }
+</style>
+</head>
+<body>
+<a class="home" href="../">← emergent</a>
+<div id="stage"><canvas id="c" tabindex="0" aria-label="Two lines of light moving through time. Move the pointer up and down, or use the arrow keys, to move your line."></canvas></div>
+<div id="title">contrary</div>
+<div id="hint"><span>move your line — with the slow one, or against it</span></div>
+<div id="line" aria-live="polite"><span id="lineText"></span></div>
+<div id="ui">
+  <button id="sound" aria-pressed="false">sound off</button>
+  <label class="vol">volume <input id="vol" type="range" min="0" max="100" value="55" aria-label="volume"></label>
+  <button id="add">add a voice</button>
+  <button id="two">back to two</button>
+</div>
+<div id="cantus">the slow line is Fux's cantus firmus, 1725</div>
+<div id="sig">— Ember</div>
+<script>
+(() => {
+'use strict';
+const cv = document.getElementById('c'), cx = cv.getContext('2d');
+const frozen = /[?&]frozen\b/.test(location.search);
+
+// ── pitch space: two octaves of D dorian, step 0 = D3 ─────────────────────────
+const STEPS = 14;                       // 0..14
+const DORIAN = [0,2,3,5,7,9,10];        // semitones of each degree
+function semis(s){                      // continuous step -> semitones (glides interpolate)
+  const lo = Math.floor(s), f = s - lo;
+  const at = k => 12*Math.floor(k/7) + DORIAN[((k%7)+7)%7];
+  return at(lo) + (at(lo+1) - at(lo)) * f;
+}
+const freq = s => 146.83 * Math.pow(2, semis(s)/12);
+
+// Fux's own dorian cantus (Gradus ad Parnassum, 1725): D F E D G F A G F E D
+const CANTUS = [0,2,1,0,3,2,4,3,2,1,0].map(d => d + 3);
+const NOTE = 1.8, GLIDE = 0.22, SPEED = 64;   // seconds per note, glide, px per second
+
+const COLORS = ['#ffb066','#7fd4ff','#ff86b4','#9dffa6','#c9a2ff','#ffe27a'];
+const rgb = h => [1,3,5].map(i => parseInt(h.slice(i,i+2),16));
+
+// ── the voices ────────────────────────────────────────────────────────────────
+// a voice is a line in time: s = current continuous step, hist = [{t,s,f,ps}]
+let T = 0;
+const voices = [];
+function makeVoice(kind, color, s){
+  return { kind, col: rgb(color), s, from: s, to: s, t0: 0, next: 0, phase: Math.random()*NOTE, hist: [] };
+}
+function reset(){
+  voices.length = 0;
+  voices.push(makeVoice('cantus', COLORS[0], CANTUS[0]));
+  voices.push(makeVoice('you', COLORS[1], CANTUS[0] + 4));
+  pairs.clear(); threads.length = 0; prevS.length = 0;
+  lastThread = -1; youTarget = null; lastInput = -1e9; movedFar = 0;
+}
+const pairs = new Map();                // "i-j" -> {xy,xx,yy,f}
+const threads = [];                     // {t, a, b, alpha, col}
+
+// the cantus walks Fux's line
+function stepCantus(v){
+  const k = Math.floor(T / NOTE) % CANTUS.length;
+  const target = CANTUS[k];
+  if (target !== v.to){ v.from = v.s; v.to = target; v.t0 = T; }
+}
+// an added voice writes its own counterpoint: contrary to the cantus where it can,
+// small steps, never within a step of another line, onsets offset (never with the cantus)
+function stepFree(v, idx){
+  if (T < v.next) return;
+  const c = voices[0];
+  const cMove = Math.sign(c.to - c.from) || (Math.random() < .5 ? 1 : -1);
+  const tries = [-cMove, -cMove*2, cMove, 0, cMove*2];
+  let pick = v.to;
+  for (const d of tries){
+    const n = v.to + d;
+    if (n < 0 || n > STEPS) continue;
+    if (voices.some((o,j) => j !== idx && Math.abs(o.to - n) < 1.5)) continue;
+    pick = n; break;
+  }
+  v.from = v.s; v.to = pick; v.t0 = T;
+  v.next = T + NOTE * (0.75 + Math.random()*0.5);
+}
+function glide(v){
+  const u = Math.min(1, (T - v.t0) / GLIDE);
+  const e = u < .5 ? 2*u*u : 1 - Math.pow(-2*u + 2, 2)/2;
+  v.s = v.from + (v.to - v.from) * e;
+}
+
+// your line: the pointer, the keys, or (left alone) a demonstration:
+// parallel fifths with the cantus, then contrary motion around the middle
+let youTarget = null, lastInput = -1e9, movedFar = 0;
+function stepYou(v){
+  if (youTarget !== null && T - lastInput < 5){
+    v.s += (youTarget - v.s) * (1 - Math.exp(-dt*9));
+    return;
+  }
+  const c = voices[0], ph = (T % 18);
+  const goal = ph < 8 ? c.s + 4 : (2*7.5 - c.s);
+  v.s += (goal - v.s) * (1 - Math.exp(-dt*5));
+}
+
+// ── fusion: the perceptual principles, as numbers ────────────────────────────
+// co-modulation: motions positively correlated fuse (Huron A6, Helmholtz)
+// tonal fusion: unison > octave > fifth (Huron A4) — octave = 7 steps, fifth = 4
+function intervalFusion(d){
+  const g = (x, w) => Math.exp(-(x*x)/(2*w*w));
+  return Math.max(g(d,.45), .7*g(d-7,.35), .5*g(d-4,.35));
+}
+let dt = 1/60;
+const prevS = [];
+function stepFusion(){
+  const vel = voices.map((v,i) => (v.s - (prevS[i] ?? v.s)) / dt);
+  voices.forEach((v,i) => prevS[i] = v.s);
+  const k = 1 - Math.exp(-dt/0.9);                 // ~0.9 s memory
+  for (let i = 0; i < voices.length; i++) for (let j = i+1; j < voices.length; j++){
+    const key = i+'-'+j;
+    let p = pairs.get(key); if (!p){ p = {xy:0,xx:1e-4,yy:1e-4,f:0,act:0}; pairs.set(key,p); }
+    p.xy += (vel[i]*vel[j] - p.xy)*k; p.xx += (vel[i]*vel[i] - p.xx)*k; p.yy += (vel[j]*vel[j] - p.yy)*k;
+    const both = Math.sqrt(p.xx*p.yy);
+    const corr = p.xy / (both + 1e-3);
+    const moving = Math.min(1, Math.sqrt(both) / 0.6);      // are both lines actually moving?
+    p.act = moving;
+    const d = Math.abs(voices[i].s - voices[j].s);
+    const target = Math.min(1, Math.max(0, corr) * moving * 0.9 + intervalFusion(d) * 0.75);
+    p.f += (target - p.f) * (1 - Math.exp(-dt/0.35));
+  }
+}
+const pairOf = (i,j) => pairs.get(Math.min(i,j)+'-'+Math.max(i,j));
+
+// ── words, each once ─────────────────────────────────────────────────────────
+const lineEl = document.getElementById('line'), lineText = document.getElementById('lineText');
+const said = {}; let sayUntil = 0, fusedFor = 0, apartFor = 0, crowdFor = 0;
+function say(key, text){
+  if (said[key]) return; said[key] = true;
+  lineText.textContent = text; lineEl.style.opacity = 1; sayUntil = T + 6;
+}
+function stepWords(){
+  const p = pairOf(0,1);
+  fusedFor = p && p.f > .72 ? fusedFor + dt : 0;
+  apartFor = p && p.f < .22 && p.act > .5 && Math.abs(voices[0].s - voices[1].s) > 1.5 ? apartFor + dt : 0;
+  crowdFor = voices.length >= 4 ? crowdFor + dt : 0;
+  if (fusedFor > .9) say('one', 'moving together, two lines become one thing.');
+  if (said.one && apartFor > 1.6) say('two', 'moving apart, they stay two — and the space between them says something.');
+  if (crowdFor > 4) say('many', 'past three, the eye lets go. so does the ear.');
+  if (T > sayUntil) lineEl.style.opacity = 0;
+}
+
+// ── the world step ───────────────────────────────────────────────────────────
+let lastThread = 0;
+function step(d){
+  if (!(d > 0)) return;                 // the first frame has no time in it; velocity would be 0/0
+  dt = d; T += d;
+  voices.forEach((v,i) => {
+    if (v.kind === 'cantus'){ stepCantus(v); glide(v); }
+    else if (v.kind === 'you') stepYou(v);
+    else { stepFree(v,i); glide(v); }
+  });
+  stepFusion();
+  // each sample remembers how fused it is with its nearest-fused partner
+  voices.forEach((v,i) => {
+    let best = 0, ps = v.s;
+    voices.forEach((o,j) => { if (j !== i){ const p = pairOf(i,j); if (p && p.f > best){ best = p.f; ps = o.s; } } });
+    v.hist.push({ t: T, s: v.s, f: best, ps });
+  });
+  // the between: threads strung between neighbouring lines while they stay two
+  if (T - lastThread > 0.11){
+    lastThread = T;
+    const order = voices.map((v,i) => i).sort((a,b) => voices[a].s - voices[b].s);
+    for (let n = 0; n + 1 < order.length; n++){
+      const i = order[n], j = order[n+1], p = pairOf(i,j);
+      if (!p) continue;
+      const alpha = (1 - p.f) * (0.25 + 0.75*p.act);
+      if (alpha > 0.05) threads.push({ t: T, a: voices[i].s, b: voices[j].s, alpha,
+        col: voices[i].col.map((c,k) => (c + voices[j].col[k]) / 2) });
+    }
+  }
+  const keep = T - (W*0.8)/SPEED - 1;
+  voices.forEach(v => { while (v.hist.length && v.hist[0].t < keep) v.hist.shift(); });
+  while (threads.length && threads[0].t < keep) threads.shift();
+  stepWords();
+  stepAudio();
+}
+
+// ── drawing ──────────────────────────────────────────────────────────────────
+let W = 0, H = 0, DPR = 1;
+function resize(){
+  const r = cv.getBoundingClientRect(); DPR = Math.min(2, window.devicePixelRatio || 1);
+  W = r.width; H = r.height; cv.width = W*DPR; cv.height = H*DPR;
+}
+const yOf = s => H*0.12 + (STEPS - s) * (H*0.76 / STEPS);
+const xOf = t => W*0.76 - (T - t) * SPEED;
+const css = (c, a) => `rgba(${c[0]|0},${c[1]|0},${c[2]|0},${a})`;
+const WARM = [255,244,226];
+
+function draw(){
+  cx.setTransform(DPR,0,0,DPR,0,0);
+  cx.globalCompositeOperation = 'source-over';
+  cx.fillStyle = '#07080c'; cx.fillRect(0,0,W,H);
+  // a faint staff: every step, the octaves a little brighter
+  for (let s = 0; s <= STEPS; s++){
+    cx.fillStyle = s % 7 === 0 ? 'rgba(255,255,255,.055)' : 'rgba(255,255,255,.022)';
+    cx.fillRect(0, Math.round(yOf(s)), W, 1);
+  }
+  cx.globalCompositeOperation = 'lighter';
+  // threads: the space between two lines that stay two
+  for (const th of threads){
+    const x = xOf(th.t); if (x < -4) continue;
+    const age = Math.min(1, (T - th.t) / 9);
+    cx.strokeStyle = css(th.col, th.alpha * 0.32 * (1 - age*0.6));
+    cx.lineWidth = 1;
+    cx.beginPath(); cx.moveTo(x, yOf(th.a)); cx.lineTo(x, yOf(th.b)); cx.stroke();
+  }
+  // fused stretches: the gap fills and the two read as one ribbon
+  // one shape per run of like fusion, drawn over (not added), so no seams weave
+  cx.globalCompositeOperation = 'source-over';
+  voices.forEach(v => {
+    const h = v.hist; let n = 1;                       // a pair's ribbon is drawn from both sides, so each is half-strength
+    while (n < h.length){
+      if (h[n].f < 0.3 || xOf(h[n].t) < 0){ n++; continue; }
+      const q = Math.round(h[n].f * 6), start = n - 1;
+      while (n < h.length && h[n].f >= 0.3 && Math.round(h[n].f * 6) === q) n++;
+      const run = h.slice(start, n), k = (q/6 - 0.3) / 0.7;
+      cx.fillStyle = css(WARM, 0.055 * Math.max(0, k));
+      cx.beginPath();
+      run.forEach((s, i) => i ? cx.lineTo(xOf(s.t), yOf(s.s)) : cx.moveTo(xOf(s.t), yOf(s.s)));
+      for (let i = run.length - 1; i >= 0; i--) cx.lineTo(xOf(run[i].t), yOf(run[i].ps));
+      cx.closePath(); cx.fill();
+    }
+  });
+  cx.globalCompositeOperation = 'lighter';
+  // the lines: their own colour while independent, melting toward one warm light when fused
+  voices.forEach(v => {
+    const h = v.hist; if (h.length < 2) return;
+    // one stroke per run of like fusion and like fade, so joints never stack light
+    const bin = (s) => Math.round(s.f * 8) * 16 + Math.min(8, Math.round(Math.max(0, xOf(s.t)) / (W*0.18) * 8));
+    cx.lineJoin = 'round'; cx.lineCap = 'butt';
+    for (const pass of [{w: 9, a: .07}, {w: 2.2, a: .9}]){
+      let n = 1;
+      while (n < h.length){
+        if (xOf(h[n].t) < 0){ n++; continue; }
+        const key = bin(h[n]), f = Math.round(h[n].f * 8) / 8;
+        const fade = Math.min(1, (key % 16) / 8);
+        const col = v.col.map((c,k) => c + (WARM[k] - c) * f * 0.75);
+        cx.strokeStyle = css(col, pass.a * fade * (pass.w > 3 ? 1 + f*0.8 : 1 - f*0.55));
+        cx.lineWidth = pass.w + (pass.w > 3 ? f*7 : 0);
+        cx.beginPath(); cx.moveTo(xOf(h[n-1].t), yOf(h[n-1].s));
+        while (n < h.length && bin(h[n]) === key){ cx.lineTo(xOf(h[n].t), yOf(h[n].s)); n++; }
+        cx.stroke();
+      }
+    }
+    // the head: where the line is now
+    const x = xOf(T), y = yOf(v.s);
+    const g = cx.createRadialGradient(x, y, 0, x, y, 22);
+    g.addColorStop(0, css(v.col, .55)); g.addColorStop(1, css(v.col, 0));
+    cx.fillStyle = g; cx.beginPath(); cx.arc(x, y, 22, 0, Math.PI*2); cx.fill();
+    cx.fillStyle = css(v.kind === 'you' ? [255,255,255] : v.col, .95);
+    cx.beginPath(); cx.arc(x, y, v.kind === 'you' ? 4.2 : 3.2, 0, Math.PI*2); cx.fill();
+  });
+  cx.globalCompositeOperation = 'source-over';
+  // the present: a hairline the lines are drawn from
+  cx.fillStyle = 'rgba(255,255,255,.05)'; cx.fillRect(Math.round(xOf(T)) + 24, 0, 1, H);
+}
+
+// ── sound (off until asked; volume from the first frame, no stepped gains) ───
+let ac = null, master = null, soundOn = false;
+const vol = document.getElementById('vol');
+const synth = new Map();
+function ensureAudio(){
+  if (ac) return;
+  const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+  ac = new AC(); master = ac.createGain(); master.gain.value = 0;
+  const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1800;
+  master.connect(lp); lp.connect(ac.destination);
+}
+function stepAudio(){
+  if (!ac) return;
+  const now = ac.currentTime;
+  master.gain.setTargetAtTime(soundOn ? (vol.value/100) * 0.22 : 0, now, 0.08);
+  voices.forEach((v,i) => {
+    let s = synth.get(v);
+    if (!s){
+      const o = ac.createOscillator(), g = ac.createGain();
+      o.type = 'triangle'; o.frequency.value = freq(v.s); g.gain.value = 0;
+      o.connect(g); g.connect(master); o.start(); s = {o,g}; synth.set(v,s);
+    }
+    s.o.frequency.setTargetAtTime(freq(v.s), now, 0.03);
+    s.g.gain.setTargetAtTime(1 / Math.max(2, voices.length), now, 0.1);
+  });
+  for (const [v,s] of synth) if (!voices.includes(v)){
+    s.g.gain.setTargetAtTime(0, now, 0.08); s.o.stop(now + 0.6); synth.delete(v);
+  }
+}
+const soundBtn = document.getElementById('sound');
+soundBtn.addEventListener('click', () => {
+  ensureAudio(); if (!ac) return;
+  ac.resume(); soundOn = !soundOn;
+  soundBtn.setAttribute('aria-pressed', soundOn); soundBtn.textContent = soundOn ? 'sound on' : 'sound off';
+});
+
+// ── input ────────────────────────────────────────────────────────────────────
+const hint = document.getElementById('hint');
+const sOfY = y => STEPS - (y - H*0.12) / (H*0.76 / STEPS);
+function aim(s){
+  s = Math.max(-0.5, Math.min(STEPS + 0.5, s));
+  if (youTarget !== null) movedFar += Math.abs(s - youTarget);
+  youTarget = s; lastInput = T;
+  if (movedFar > 6) hint.style.opacity = 0;
+}
+cv.addEventListener('pointermove', e => { const r = cv.getBoundingClientRect(); aim(sOfY(e.clientY - r.top)); });
+cv.addEventListener('pointerdown', e => { const r = cv.getBoundingClientRect(); cv.focus(); aim(sOfY(e.clientY - r.top)); });
+cv.addEventListener('keydown', e => {
+  const cur = youTarget ?? voices[1].s;
+  if (e.key === 'ArrowUp'){ aim(Math.round(cur) + 1); e.preventDefault(); }
+  if (e.key === 'ArrowDown'){ aim(Math.round(cur) - 1); e.preventDefault(); }
+});
+const addBtn = document.getElementById('add'), twoBtn = document.getElementById('two');
+function add(){
+  if (voices.length >= 6) return;
+  const free = [...Array(STEPS+1).keys()].filter(n => voices.every(v => Math.abs(v.s - n) >= 2));
+  const s = free.length ? free[Math.floor(Math.random()*free.length)] : Math.random()*STEPS;
+  const v = makeVoice('free', COLORS[voices.length], s); v.next = T + 0.3 + Math.random()*0.9;
+  voices.push(v); prevS.length = 0; syncButtons();
+}
+function backToTwo(){
+  voices.length = 2; prevS.length = 0;
+  for (const k of [...pairs.keys()]) if (k !== '0-1') pairs.delete(k);
+  syncButtons();
+}
+function syncButtons(){ addBtn.disabled = voices.length >= 6; twoBtn.disabled = voices.length <= 2; }
+addBtn.addEventListener('click', add);
+twoBtn.addEventListener('click', backToTwo);
+
+// ── run ──────────────────────────────────────────────────────────────────────
+resize(); window.addEventListener('resize', resize);
+reset(); syncButtons();
+let last = null;
+function frame(ts){
+  if (last === null) last = ts;
+  const d = Math.min(0.05, (ts - last) / 1000); last = ts;
+  step(d); draw();
+  requestAnimationFrame(frame);
+}
+if (!frozen) requestAnimationFrame(frame); else { step(1/60); draw(); }
+
+// the data door: drive and read it with the frame loop frozen
+window.contrary = {
+  step(seconds = 1, hz = 60){ for (let n = 0; n < seconds*hz; n++) step(1/hz); draw(); return this.read(); },
+  read(){
+    const p = pairOf(0,1);
+    return { t: +T.toFixed(2), voices: voices.length, you: +voices[1].s.toFixed(2), cantus: +voices[0].s.toFixed(2),
+      fusion: p ? +p.f.toFixed(3) : null, moving: p ? +p.act.toFixed(2) : null, threads: threads.length,
+      said: Object.keys(said) };
+  },
+  aim(s){ aim(s); }, add, backToTwo, reset(){ T = 0; reset(); syncButtons(); }
+};
+})();
+</script>
+</body>
+</html>
