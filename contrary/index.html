@@ -88,7 +88,7 @@ const freq = s => 146.83 * Math.pow(2, semis(s)/12);
 
 // Fux's own dorian cantus (Gradus ad Parnassum, 1725): D F E D G F A G F E D
 const CANTUS = [0,2,1,0,3,2,4,3,2,1,0].map(d => d + 3);
-const NOTE = 1.8, GLIDE = 0.22, SPEED = 64;   // seconds per note, glide, px per second
+const NOTE = 1.8, GLIDE = 0.34, SPEED = 64;   // seconds per note, glide, px per second
 
 const COLORS = ['#ffb066','#7fd4ff','#ff86b4','#9dffa6','#c9a2ff','#ffe27a'];
 const rgb = h => [1,3,5].map(i => parseInt(h.slice(i,i+2),16));
@@ -106,20 +106,48 @@ function reset(){
   voices.push(makeVoice('you', COLORS[1], CANTUS[0] + 4));
   pairs.clear(); threads.length = 0; prevS.length = 0;
   lastThread = -1; youTarget = null; lastInput = -1e9; movedFar = 0;
+  cadence = null; blooms.length = 0;
 }
 const pairs = new Map();                // "i-j" -> {xy,xx,yy,f}
 const threads = [];                     // {t, a, b, alpha, col}
 
-// the cantus walks Fux's line
-function stepCantus(v){
-  const k = Math.floor(T / NOTE) % CANTUS.length;
-  const target = CANTUS[k];
-  if (target !== v.to){ v.from = v.s; v.to = target; v.t0 = T; }
+// the cantus walks Fux's line as a phrase: ten notes, the final held while it lands,
+// then a breath of silence before it begins again (a phrase that closes, closes)
+const FINAL = 2.5*NOTE, REST = 1.8, CYCLE = 10*NOTE + FINAL + REST;
+function phrase(t = T){
+  const c = t % CYCLE, n = Math.floor(t / CYCLE);
+  if (c < 10*NOTE) return { k: Math.floor(c / NOTE), rest: false, n, c };
+  return { k: 10, rest: c >= 10*NOTE + FINAL, n, c };
 }
+// a first-species counterpoint above this cantus, after Fux's own (A A G A B C C B D C♯ D):
+// every interval a consonance, mostly contrary, ending sixth → octave by step
+const FUX = [7,7,6,7,8,9,9,8,10,9.5,10];
+let cadence = null;                     // {t, ok} — the arrival at the final
+function stepCantus(v){
+  const p = phrase(), target = CANTUS[p.k];
+  v.rest = p.rest;
+  if (target !== v.to){ v.from = v.s; v.to = target; v.t0 = T; }
+  if (p.k === 10 && !p.rest && (!cadence || cadence.n !== p.n)) cadence = { n: p.n, t: T, judged: false, ok: false };
+  if (cadence && !cadence.judged && T - cadence.t > GLIDE + 0.35) judgeCadence();
+}
+// the old rule turns at the end: arriving at one (unison or octave) by contrary step is the goal
+function judgeCadence(){
+  cadence.judged = true; cadence.judgedAt = T;
+  const c = voices[0], y = voices[1];
+  const before = y.hist.find(h => h.t >= cadence.t - 1.0) || y.hist[0];
+  const d = y.s - c.s;
+  const atOne = Math.abs(d) < 0.45 || Math.abs(Math.abs(d) - 7) < 0.45;
+  const contrary = before && (y.s - before.s) * (c.to - CANTUS[9]) < -0.09;
+  cadence.ok = atOne && contrary;
+  if (cadence.ok){ cadence.s1 = c.s; cadence.s2 = y.s; blooms.push({ t: T, a: c.s, b: y.s }); }
+}
+const blooms = [];
 // an added voice writes its own counterpoint: contrary to the cantus where it can,
 // small steps, never within a step of another line, onsets offset (never with the cantus)
 function stepFree(v, idx){
-  if (T < v.next) return;
+  const ph = phrase();
+  v.rest = ph.rest;                      // when the phrase closes, every voice breathes
+  if (ph.k === 10 || T < v.next) return;  // and holds still while the final lands
   const c = voices[0];
   const cMove = Math.sign(c.to - c.from) || (Math.random() < .5 ? 1 : -1);
   const tries = [-cMove, -cMove*2, cMove, 0, cMove*2];
@@ -133,9 +161,10 @@ function stepFree(v, idx){
   v.from = v.s; v.to = pick; v.t0 = T;
   v.next = T + NOTE * (0.75 + Math.random()*0.5);
 }
+// a note lands: a small overshoot and a settle, so the line finds its place, not just reaches it
 function glide(v){
-  const u = Math.min(1, (T - v.t0) / GLIDE);
-  const e = u < .5 ? 2*u*u : 1 - Math.pow(-2*u + 2, 2)/2;
+  const u = Math.min(1, (T - v.t0) / GLIDE), c1 = 0.9, c3 = c1 + 1;
+  const e = 1 + c3*Math.pow(u - 1, 3) + c1*Math.pow(u - 1, 2);
   v.s = v.from + (v.to - v.from) * e;
 }
 
@@ -147,8 +176,10 @@ function stepYou(v){
     v.s += (youTarget - v.s) * (1 - Math.exp(-dt*9));
     return;
   }
-  const c = voices[0], ph = (T % 18);
-  const goal = ph < 8 ? c.s + 4 : (2*7.5 - c.s);
+  // left alone it alternates phrases: parallel fifths all the way (and the ending cannot land),
+  // then Fux's own counterpoint (and it does)
+  const c = voices[0], p = phrase();
+  const goal = p.n % 2 === 0 ? c.s + 4 : FUX[p.k];
   v.s += (goal - v.s) * (1 - Math.exp(-dt*5));
 }
 
@@ -194,6 +225,7 @@ function stepWords(){
   crowdFor = voices.length >= 4 ? crowdFor + dt : 0;
   if (fusedFor > .9) say('one', 'moving together, two lines become one thing.');
   if (said.one && apartFor > 1.6) say('two', 'moving apart, they stay two — and the space between them says something.');
+  if (cadence && cadence.ok) say('end', 'at the end the rule turns: becoming one is where you arrive, not how you travel.');
   if (crowdFor > 4) say('many', 'past three, the eye lets go. so does the ear.');
   if (T > sayUntil) lineEl.style.opacity = 0;
 }
@@ -212,8 +244,10 @@ function step(d){
   // each sample remembers how fused it is with its nearest-fused partner
   voices.forEach((v,i) => {
     let best = 0, ps = v.s;
-    voices.forEach((o,j) => { if (j !== i){ const p = pairOf(i,j); if (p && p.f > best){ best = p.f; ps = o.s; } } });
-    v.hist.push({ t: T, s: v.s, f: best, ps });
+    voices.forEach((o,j) => { if (j !== i && !o.rest && !v.rest){ const p = pairOf(i,j); if (p && p.f > best){ best = p.f; ps = o.s; } } });
+    const cad = !!(cadence && cadence.ok && phrase().k === 10 && !voices[0].rest && (i <= 1));
+    const cw = cad ? Math.min(1, (T - cadence.judgedAt) / 0.7) : 0;     // the gold grows in
+    v.hist.push({ t: T, s: v.s, f: Math.max(best, 0.9 * cw), ps, rest: !!v.rest, cad });
   });
   // the between: threads strung between neighbouring lines while they stay two
   if (T - lastThread > 0.11){
@@ -221,15 +255,17 @@ function step(d){
     const order = voices.map((v,i) => i).sort((a,b) => voices[a].s - voices[b].s);
     for (let n = 0; n + 1 < order.length; n++){
       const i = order[n], j = order[n+1], p = pairOf(i,j);
-      if (!p) continue;
+      if (!p || voices[i].rest || voices[j].rest) continue;
+      if (cadence && cadence.ok && phrase().k === 10 && i <= 1 && j <= 1) continue;   // arrived: nothing left between
       const alpha = (1 - p.f) * (0.25 + 0.75*p.act);
-      if (alpha > 0.05) threads.push({ t: T, a: voices[i].s, b: voices[j].s, alpha,
+      if (alpha > 0.05) threads.push({ t: T, a: voices[i].s, b: voices[j].s, alpha, semi: Math.abs(semis(voices[i].s) - semis(voices[j].s)),
         col: voices[i].col.map((c,k) => (c + voices[j].col[k]) / 2) });
     }
   }
   const keep = T - (W*0.8)/SPEED - 1;
   voices.forEach(v => { while (v.hist.length && v.hist[0].t < keep) v.hist.shift(); });
   while (threads.length && threads[0].t < keep) threads.shift();
+  while (blooms.length && blooms[0].t < keep) blooms.shift();
   stepWords();
   stepAudio();
 }
@@ -243,7 +279,8 @@ function resize(){
 const yOf = s => H*0.12 + (STEPS - s) * (H*0.76 / STEPS);
 const xOf = t => W*0.76 - (T - t) * SPEED;
 const css = (c, a) => `rgba(${c[0]|0},${c[1]|0},${c[2]|0},${a})`;
-const WARM = [255,244,226];
+const WARM = [255,244,226], GOLD = [255,206,120];
+const bell = (x, w) => Math.exp(-(x*x)/(2*w*w));
 
 function draw(){
   cx.setTransform(DPR,0,0,DPR,0,0);
@@ -259,7 +296,11 @@ function draw(){
   for (const th of threads){
     const x = xOf(th.t); if (x < -4) continue;
     const age = Math.min(1, (T - th.t) / 9);
-    cx.strokeStyle = css(th.col, th.alpha * 0.32 * (1 - age*0.6));
+    // seconds, the tritone, sevenths, ninths — measured in semitones, where clash lives
+    const m = th.semi % 12 + (th.semi >= 12 && th.semi % 12 < 3 ? 12 : 0);
+    const clash = Math.max(bell(m - 1.5, .5), bell(m - 6, .35), bell(m - 10.5, .5), bell(m - 13.5, .5));
+    const shimmer = 1 - 0.55 * clash * (0.5 + 0.5*Math.sin(T*23 + th.t*61));
+    cx.strokeStyle = css(th.col, th.alpha * 0.32 * (1 - age*0.6) * shimmer);
     cx.lineWidth = 1;
     cx.beginPath(); cx.moveTo(x, yOf(th.a)); cx.lineTo(x, yOf(th.b)); cx.stroke();
   }
@@ -270,10 +311,10 @@ function draw(){
     const h = v.hist; let n = 1;                       // a pair's ribbon is drawn from both sides, so each is half-strength
     while (n < h.length){
       if (h[n].f < 0.3 || xOf(h[n].t) < 0){ n++; continue; }
-      const q = Math.round(h[n].f * 6), start = n - 1;
-      while (n < h.length && h[n].f >= 0.3 && Math.round(h[n].f * 6) === q) n++;
+      const q = Math.round(h[n].f * 6), cad = h[n].cad, start = n - 1;
+      while (n < h.length && h[n].f >= 0.3 && Math.round(h[n].f * 6) === q && h[n].cad === cad) n++;
       const run = h.slice(start, n), k = (q/6 - 0.3) / 0.7;
-      cx.fillStyle = css(WARM, 0.055 * Math.max(0, k));
+      cx.fillStyle = css(cad ? GOLD : WARM, 0.055 * Math.max(0, k));
       cx.beginPath();
       run.forEach((s, i) => i ? cx.lineTo(xOf(s.t), yOf(s.s)) : cx.moveTo(xOf(s.t), yOf(s.s)));
       for (let i = run.length - 1; i >= 0; i--) cx.lineTo(xOf(run[i].t), yOf(run[i].ps));
@@ -281,20 +322,29 @@ function draw(){
     }
   });
   cx.globalCompositeOperation = 'lighter';
+  for (const b of blooms){
+    const x = xOf(b.t), ya = yOf(b.a), yb = yOf(b.b), ym = (ya + yb) / 2;
+    const r = Math.abs(ya - yb) / 2 + 26, age = T - b.t;
+    const a = 0.035 + 0.13 * Math.exp(-age / 1.2);
+    const g = cx.createRadialGradient(x, ym, 0, x, ym, r);
+    g.addColorStop(0, css(GOLD, a)); g.addColorStop(1, css(GOLD, 0));
+    cx.fillStyle = g; cx.beginPath(); cx.arc(x, ym, r, 0, Math.PI*2); cx.fill();
+  }
   // the lines: their own colour while independent, melting toward one warm light when fused
   voices.forEach(v => {
     const h = v.hist; if (h.length < 2) return;
     // one stroke per run of like fusion and like fade, so joints never stack light
-    const bin = (s) => Math.round(s.f * 8) * 16 + Math.min(8, Math.round(Math.max(0, xOf(s.t)) / (W*0.18) * 8));
+    const bin = (s) => (Math.round(s.f * 8) * 16 + Math.min(8, Math.round(Math.max(0, xOf(s.t)) / (W*0.18) * 8))) * 4 + (s.cad ? 1 : 0) + (s.rest ? 2 : 0);
     cx.lineJoin = 'round'; cx.lineCap = 'butt';
     for (const pass of [{w: 9, a: .07}, {w: 2.2, a: .9}]){
       let n = 1;
       while (n < h.length){
         if (xOf(h[n].t) < 0){ n++; continue; }
-        const key = bin(h[n]), f = Math.round(h[n].f * 8) / 8;
-        const fade = Math.min(1, (key % 16) / 8);
-        const col = v.col.map((c,k) => c + (WARM[k] - c) * f * 0.75);
-        cx.strokeStyle = css(col, pass.a * fade * (pass.w > 3 ? 1 + f*0.8 : 1 - f*0.55));
+        const key = bin(h[n]), f = Math.round(h[n].f * 8) / 8, cad = h[n].cad, rest = h[n].rest;
+        const fade = Math.min(1, (Math.floor(key / 4) % 16) / 8) * (rest ? 0.22 : 1);
+        const to = cad ? GOLD : WARM;
+        const col = v.col.map((c,k) => c + (to[k] - c) * f * (cad ? 0.9 : 0.75));
+        cx.strokeStyle = css(col, pass.a * fade * (pass.w > 3 ? 1 + f*0.8 : 1 - f*(cad ? 0.1 : 0.55)));
         cx.lineWidth = pass.w + (pass.w > 3 ? f*7 : 0);
         cx.beginPath(); cx.moveTo(xOf(h[n-1].t), yOf(h[n-1].s));
         while (n < h.length && bin(h[n]) === key){ cx.lineTo(xOf(h[n].t), yOf(h[n].s)); n++; }
@@ -304,7 +354,8 @@ function draw(){
     // the head: where the line is now
     const x = xOf(T), y = yOf(v.s);
     const g = cx.createRadialGradient(x, y, 0, x, y, 22);
-    g.addColorStop(0, css(v.col, .55)); g.addColorStop(1, css(v.col, 0));
+    const quiet = v.rest ? 0.3 : 1;
+    g.addColorStop(0, css(v.col, .55 * quiet)); g.addColorStop(1, css(v.col, 0));
     cx.fillStyle = g; cx.beginPath(); cx.arc(x, y, 22, 0, Math.PI*2); cx.fill();
     cx.fillStyle = css(v.kind === 'you' ? [255,255,255] : v.col, .95);
     cx.beginPath(); cx.arc(x, y, v.kind === 'you' ? 4.2 : 3.2, 0, Math.PI*2); cx.fill();
@@ -328,7 +379,9 @@ function ensureAudio(){
 function stepAudio(){
   if (!ac) return;
   const now = ac.currentTime;
-  master.gain.setTargetAtTime(soundOn ? (vol.value/100) * 0.22 : 0, now, 0.08);
+  // the ear hears loudness logarithmically: an exponential slider, so the low half is usable
+  const x = vol.value / 100, level = (Math.exp(4*x) - 1) / (Math.exp(4) - 1) * 0.3;
+  master.gain.setTargetAtTime(soundOn ? level : 0, now, 0.08);
   voices.forEach((v,i) => {
     let s = synth.get(v);
     if (!s){
@@ -337,7 +390,13 @@ function stepAudio(){
       o.connect(g); g.connect(master); o.start(); s = {o,g}; synth.set(v,s);
     }
     s.o.frequency.setTargetAtTime(freq(v.s), now, 0.03);
-    s.g.gain.setTargetAtTime(1 / Math.max(2, voices.length), now, 0.1);
+    const base = v.rest ? 0 : 1 / Math.max(2, voices.length);
+    if (v.t0 !== s.t0 && v.kind !== 'you'){
+      // a sung onset: the old note eases off and the new one swells in (ramped, never stepped)
+      s.t0 = v.t0; s.until = now + 0.12;
+      s.g.gain.setTargetAtTime(base * 0.4, now, 0.015);
+      s.g.gain.setTargetAtTime(base, now + 0.06, 0.09);
+    } else if (!(now < s.until)) s.g.gain.setTargetAtTime(base, now, v.rest ? 0.35 : 0.1);
   });
   for (const [v,s] of synth) if (!voices.includes(v)){
     s.g.gain.setTargetAtTime(0, now, 0.08); s.o.stop(now + 0.6); synth.delete(v);
