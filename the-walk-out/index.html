@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>the walk out</title>
+<meta name="description" content="One number in your hand, seen three ways: two tones, a seed head, and the two waves drawn against each other. Start at unison and walk out to the sunflower.">
+<style>
+  :root{ --bg:#08070a; --text:#ece8e1; --muted:#8d8a92; --gold:#ffc462; --low:#ff9a5c; --high:#8fd0ff; }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:var(--bg); color:var(--text); overflow:hidden;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+  }
+  /* the working surface gets the room */
+  #stage{position:fixed; left:0; right:0; top:0; bottom:118px}
+  canvas#c{position:absolute; inset:0; width:100%; height:100%; display:block; touch-action:none; cursor:ew-resize}
+  canvas#c:focus{outline:none}
+  canvas#c:focus-visible{outline:1px solid rgba(255,196,98,.35); outline-offset:-6px}
+
+  .home{position:fixed; top:16px; left:18px; z-index:6; color:#5f5c66; text-decoration:none; font-size:13px}
+  .home:hover{color:#c4b39c}
+  #title{
+    position:fixed; left:0; right:0; top:18px; text-align:center; pointer-events:none;
+    font-size:11px; letter-spacing:.42em; text-transform:uppercase; color:#dcc6a6; opacity:.3;
+  }
+  #hint, #line{
+    position:fixed; left:50%; transform:translateX(-50%); width:min(92%,620px); text-align:center;
+    pointer-events:none; letter-spacing:.02em; transition:opacity 1.2s ease;
+  }
+  #hint{top:50px; font-size:14px; color:#dcd8d2; opacity:.8}
+  #line{bottom:190px; font-size:15px; line-height:1.5; color:#f2e4cc; opacity:0}
+  #hint span, #line span{
+    display:inline-block; padding:6px 15px; border-radius:999px;
+    background:rgba(8,7,10,.82); box-shadow:0 0 18px 9px rgba(8,7,10,.82);
+  }
+  #read{
+    text-align:center; pointer-events:none; max-width:100%; min-height:1.5em;
+    font-size:13px; letter-spacing:.06em; color:#bfb8ad; font-variant-numeric:tabular-nums;
+  }
+  #read b{color:#f4e2c2; font-weight:500}
+  #ui{
+    position:fixed; left:0; right:0; bottom:16px; z-index:5;
+    display:flex; flex-direction:column; align-items:center; gap:14px; padding:0 16px;
+    font-size:13px; color:#a9a5ad;
+  }
+  .ruler{position:relative; width:min(560px, 100%); padding-top:24px}
+  .ruler canvas{position:absolute; left:0; right:0; top:0; height:24px; width:100%; pointer-events:none}
+  .ruler input{width:100%; accent-color:var(--gold); display:block}
+  .ruler input:focus-visible{outline:2px solid var(--gold); outline-offset:4px}
+  .row{display:flex; gap:10px 16px; align-items:center; justify-content:center; flex-wrap:wrap}
+  .row button{
+    border:1px solid rgba(255,255,255,.16); background:rgba(255,255,255,.04); color:#d2cec8;
+    padding:8px 15px; border-radius:999px; cursor:pointer; font:inherit; transition:all .3s;
+  }
+  .row button:hover{border-color:rgba(255,255,255,.4); color:#fff}
+  .row button:focus-visible{outline:2px solid var(--gold); outline-offset:2px}
+  .row button[aria-pressed="true"]{border-color:var(--gold); color:#fff}
+  .row .vol{display:inline-flex; align-items:center; gap:8px}
+  .row input[type=range]{width:96px; accent-color:var(--gold)}
+  .row input[type=range]:focus-visible{outline:2px solid var(--gold); outline-offset:3px}
+  #sig{position:fixed; right:18px; bottom:24px; color:#5f5c66; font-size:12px; letter-spacing:.12em; pointer-events:none}
+  @media (max-width:720px){ #sig{display:none} #read{font-size:12px; min-height:3em} }
+</style>
+</head>
+<body>
+<a class="home" href="../">← emergent</a>
+<div id="stage"><canvas id="c" tabindex="0" aria-label="A seed head and two waves, shaped by one number. Drag sideways, or use the left and right arrow keys, to change the number."></canvas></div>
+<div id="title">the walk out</div>
+<div id="hint"><span>drag sideways to change one number — or let it walk</span></div>
+<div id="line" aria-live="polite"><span id="lineText"></span></div>
+<div id="ui">
+  <div id="read" aria-live="off"></div>
+  <div class="ruler"><canvas id="ticks" aria-hidden="true"></canvas>
+    <input id="num" type="range" min="1" max="2" step="0.0001" value="1" aria-label="the ratio between the two tones, from unison to the octave">
+  </div>
+  <div class="row">
+    <button id="sound" aria-pressed="false">sound off</button>
+    <label class="vol">volume <input id="vol" type="range" min="0" max="100" value="55" aria-label="volume"></label>
+    <button id="walk">walk it again</button>
+  </div>
+</div>
+<div id="sig">— Ember</div>
+<script>
+(() => {
+'use strict';
+const cv = document.getElementById('c'), cx = cv.getContext('2d');
+const frozen = /[?&]frozen\b/.test(location.search);
+const PHI = (1 + Math.sqrt(5)) / 2;
+const cents = r => 1200 * Math.log2(r);
+
+const N = 720;                              // seeds in the head
+// ── the one number ───────────────────────────────────────────────────────────
+// r is the ratio of the high tone to the low one, from unison (1) to the octave (2).
+// The same r sets the seeds' turn (r − 1 of a full turn between one seed and the next)
+// and the second wave of the figure. Nothing else is chosen.
+let r = 1, from = 1, to = 1, t0 = 0, glideFor = 0.66, T = 0, dt = 1/60;
+
+// the intervals that have names, as p:q (q is how often the two waves line up)
+const NAMED = [
+  [1,1,'unison'], [16,15,'half step'], [9,8,'whole step'], [6,5,'minor third'], [5,4,'major third'],
+  [4,3,'fourth'], [45,32,'tritone'], [3,2,'fifth'], [8,5,'minor sixth'], [5,3,'major sixth'],
+  [7,4,'harmonic seventh'], [9,5,'minor seventh'], [15,8,'major seventh'], [2,1,'octave'],
+];
+// φ is named only at φ itself — the walk's steps 34:21, 55:34, 89:55 are fractions, and say so.
+// (0.06 c lets the ruler's nearest stop, 1.6180, count; its twin 2 − 1/φ makes the same head in a mirror.)
+const MIRROR = 2 - 1/PHI;
+function nameOf(x){
+  const c = cents(x);
+  if (Math.abs(c - cents(PHI)) < 0.06) return { phi: true };
+  if (Math.abs(c - cents(MIRROR)) < 0.06) return { mirror: true };
+  let best = null;
+  for (const [p,q,n] of NAMED){ const d = Math.abs(c - cents(p/q)); if (d < 5 && (!best || d < best.d)) best = { p, q, n, d }; }
+  return best;
+}
+
+// how many straight arms the seeds make: the smallest q that keeps every q-th seed on one ray
+// across the whole head (total drift under a quarter of the gap between arms); 0 = none
+function armsOf(x){
+  const t = x - 1;
+  for (let q = 1; q <= 34; q++){            // past 34 an arm holds too few seeds to read as one
+    const err = Math.abs(t - Math.round(t*q)/q);
+    if (N * err * q * 4 < 1) return q;
+  }
+  return 0;
+}
+
+// ── the walk: out from unison through the Fibonacci ratios to φ, then home ─────
+// [ratio, hold seconds, glide seconds into it]
+const OUT = [[1,3.6,0],[2,3.6,2.4],[3/2,3.6,.66],[5/3,3.6,.66],[8/5,3.6,.66],
+             [13/8,2.1,.66],[21/13,1.5,.5],[34/21,1.2,.4],[55/34,.9,.33],[89/55,.9,.33],[PHI,9,.33]];
+const HOME = [[8/5,1.8,.9],[5/3,1.8,.66],[3/2,1.8,.66],[2,2.4,.66],[1,3.6,2.4]];
+const WALK = [...OUT.map(s => [...s,'out']), ...HOME.map(s => [...s,'home'])];
+const BREATH = 1.8;                         // silence before it walks out again
+let mode = 'walk', wi = 0, wNext = 0, lastHand = -1e9, breathUntil = -1;
+function goTo(x, g){ from = r; to = x; t0 = T; glideFor = Math.max(1e-3, g); }
+function startWalk(){
+  mode = 'walk'; wi = 0; breathUntil = -1;
+  goTo(1, Math.abs(r - 1) > .01 ? 1.2 : 0);
+  wNext = T + glideFor + WALK[0][1];
+  homeSeen = false;
+}
+function stepWalk(){
+  if (mode !== 'walk') { if (T - lastHand > 12) startWalk(); return; }
+  if (breathUntil > 0){ if (T >= breathUntil) startWalk(); return; }
+  if (T < wNext) return;
+  wi++;
+  if (wi >= WALK.length){ breathUntil = T + BREATH; return; }
+  const [x, hold, g] = WALK[wi];
+  goTo(x, g); wNext = T + g + hold;
+}
+// a value lands with a small overshoot and a settle (back-out), so it finds its place
+function glide(){
+  const u = Math.min(1, (T - t0) / glideFor), c1 = 0.6, c3 = c1 + 1;
+  const e = u >= 1 ? 1 : 1 + c3*Math.pow(u - 1, 3) + c1*Math.pow(u - 1, 2);
+  r = Math.max(1, Math.min(2, from + (to - from) * e));   // the settle may overshoot; the number may not
+}
+
+// ── the seed head (Vogel's model: seed n at turn n·(r−1), radius ∝ √n) ─────────
+const sx = new Float32Array(N), sy = new Float32Array(N), room = new Float32Array(N);
+let roomPhi = 1, roomNow = 1;
+function placeSeeds(x, out){
+  const turn = x - 1;
+  for (let n = 0; n < N; n++){
+    const a = 2*Math.PI*(n+1)*turn, d = Math.sqrt(n + 0.5);
+    out.x[n] = Math.cos(a) * d; out.y[n] = Math.sin(a) * d;
+  }
+}
+// each seed's room: the distance to its nearest neighbour (in units where the ideal is ~1)
+const grid = new Map(), CELL = 2.4;   // φ's nearest-neighbour spacing is ~1.7 seed units; a cell must hold a neighbour
+function measureRoom(X, Y, R){
+  grid.clear();
+  for (let n = 0; n < N; n++){
+    const k = Math.floor(X[n]/CELL) + ',' + Math.floor(Y[n]/CELL);
+    let b = grid.get(k); if (!b){ b = []; grid.set(k, b); } b.push(n);
+  }
+  let sum = 0;
+  for (let n = 0; n < N; n++){
+    const gx = Math.floor(X[n]/CELL), gy = Math.floor(Y[n]/CELL); let best = CELL;
+    for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++){
+      const b = grid.get((gx+i) + ',' + (gy+j)); if (!b) continue;
+      for (const m of b){ if (m === n) continue; const dx = X[m]-X[n], dy = Y[m]-Y[n], d = Math.sqrt(dx*dx+dy*dy); if (d < best) best = d; }
+    }
+    R[n] = best; sum += best;
+  }
+  return sum / N;
+}
+{ const px = new Float32Array(N), py = new Float32Array(N);
+  placeSeeds(PHI, {x:px, y:py}); roomPhi = measureRoom(px, py, new Float32Array(N)); }
+
+// ── words, each once ─────────────────────────────────────────────────────────
+const lineEl = document.getElementById('line'), lineText = document.getElementById('lineText');
+const said = {}; let sayUntil = 0, homeSeen = false;
+function say(key, text){
+  if (said[key]) return; said[key] = true;
+  lineText.textContent = text; lineEl.style.opacity = 1; sayUntil = T + 6;
+}
+let settledFor = 0, lastName = null, armsFor = 0;
+function stepWords(){
+  const q = armsOf(r);
+  armsFor = mode === 'hand' && !nameOf(r) && q >= 6 ? armsFor + dt : 0;
+  if (armsFor > 1.2 && T > sayUntil) say('fraction', `${q} arms. every number on this ruler is a fraction, so somewhere it lines up.`);
+  const nm = nameOf(r);
+  const key = nm ? (nm.phi ? 'phi' : nm.mirror ? 'mirror' : nm.p+':'+nm.q) : null;
+  settledFor = key && key === lastName ? settledFor + dt : 0; lastName = key;
+  if (settledFor < 0.5) { if (T > sayUntil) lineEl.style.opacity = 0; return; }
+  if (key === '1:1' && !homeSeen) say('unison', 'one against one: unison. every seed lands on the same line.');
+  if (key === '2:1') say('octave', 'two against one: the octave. the waves line up every turn — still one line of seeds.');
+  if (key === '3:2') say('fifth', 'three against two: the fifth. they line up every second turn, and the seeds fall into two arms.');
+  if (key === '8:5') say('sixth', 'eight against five: the last interval on this road with a name. five arms.');
+  if (key === 'phi'){ say('phi', '833 cents: the number farthest from every fraction. the waves never line up again, and no seed lands in line with another.'); homeSeen = true; }
+  if (key === 'mirror') say('mirror', 'the same seed head as φ, seen in a mirror: a turn of 0.382 instead of 0.618.');
+  if (key === '1:1' && homeSeen) say('home', 'music walks this road home. the sunflower walks it away.');
+  if (T > sayUntil) lineEl.style.opacity = 0;
+}
+
+// ── the world step ───────────────────────────────────────────────────────────
+let grown = frozen ? N : 0, phase = 0;
+function step(d){
+  if (!(d > 0)) return;                 // the first frame has no time in it
+  dt = d; T += d;
+  stepWalk(); glide();
+  grown = Math.min(N, grown + d * 150);
+  phase += d * 0.35;
+  placeSeeds(r, {x:sx, y:sy});
+  roomNow = measureRoom(sx, sy, room) / roomPhi;
+  stepWords(); stepAudio(); syncRuler();
+}
+
+// ── drawing ──────────────────────────────────────────────────────────────────
+let W = 0, H = 0, DPR = 1;
+const stageEl = document.getElementById('stage'), uiEl = document.getElementById('ui');
+let hintBottom = 92;
+function resize(){
+  const bar = window.innerHeight - uiEl.getBoundingClientRect().top;   // the bar's real height, wrapped or not
+  stageEl.style.bottom = Math.ceil(bar + 6) + 'px';
+  document.getElementById('line').style.bottom = Math.ceil(bar + 18) + 'px';
+  hintBottom = Math.max(52, Math.ceil(document.getElementById('hint').getBoundingClientRect().bottom) + 8);  // below the title, hint or no hint
+  const rc = cv.getBoundingClientRect(); DPR = Math.min(2, window.devicePixelRatio || 1);
+  W = rc.width; H = rc.height; cv.width = W*DPR; cv.height = H*DPR;
+  sizeTicks();
+}
+const GOLD = [255,196,98], LOW = [255,154,92], HIGH = [143,208,255];
+const css = (c, a) => `rgba(${c[0]|0},${c[1]|0},${c[2]|0},${a})`;
+function draw(){
+  cx.setTransform(DPR,0,0,DPR,0,0);
+  cx.globalCompositeOperation = 'source-over';
+  cx.fillStyle = '#08070a'; cx.fillRect(0,0,W,H);
+  const narrow = W < 720;
+  // the seed head takes the room; the figure sits beside it (above it, on a phone)
+  // on a phone the figure gets its own strip at the top, and the head fits what is left
+  const L = narrow ? Math.min(W*0.15, 56) : 0;
+  const top = hintBottom + 2*L + 48;       // below the hint (measured, not assumed) and the figure's two bars
+  const R = narrow ? Math.max(40, Math.min(W*0.44, (H - top - 12) / 2)) : Math.min(W*0.3, H*0.4);
+  const fx = narrow ? W/2 : W*0.56, fy = narrow ? top + R : H*0.54;
+  const unit = R / Math.sqrt(N);
+  // a faint disc where the head will be
+  const g = cx.createRadialGradient(fx, fy, 0, fx, fy, R*1.08);
+  g.addColorStop(0, 'rgba(255,196,98,.05)'); g.addColorStop(1, 'rgba(255,196,98,0)');
+  cx.fillStyle = g; cx.beginPath(); cx.arc(fx, fy, R*1.08, 0, Math.PI*2); cx.fill();
+  // the seeds: each as large as its room allows
+  const shown = Math.floor(grown);
+  for (let n = 0; n < shown; n++){
+    const rm = Math.min(1.15, room[n] / roomPhi);          // 1 = as much room as the sunflower gives
+    const rad = Math.max(0.55, Math.min(1, rm) * roomPhi * 0.42 * unit);
+    const age = Math.min(1, (grown - n) / 40);
+    const lit = 0.35 + 0.65 * Math.min(1, rm / 0.72);
+    const col = GOLD.map((c,k) => c * (0.55 + 0.45*lit) + (k === 0 ? 0 : -18*(1-lit)));
+    cx.fillStyle = css(col, (0.35 + 0.6*lit) * age);
+    cx.beginPath(); cx.arc(fx + sx[n]*unit, fy + sy[n]*unit, rad, 0, Math.PI*2); cx.fill();
+  }
+  // the two waves drawn against each other: closes after q turns, or never
+  const LL = narrow ? L : Math.min(R*0.36, 92);
+  const lx = narrow ? W/2 : Math.max(LL + 12, W*0.56 - R - LL - Math.max(40, W*0.06)), ly = narrow ? hintBottom + 12 + L : fy;
+  cx.globalCompositeOperation = 'lighter';
+  cx.lineWidth = 1;
+  const CYC = 21, SEG = 2400;
+  cx.strokeStyle = 'rgba(214,226,255,.16)';
+  cx.beginPath();
+  for (let i = 0; i <= SEG; i++){
+    const u = i / SEG * CYC * 2*Math.PI;
+    const x = lx + Math.sin(u) * LL, y = ly + Math.sin(r*u + phase) * LL;
+    i ? cx.lineTo(x, y) : cx.moveTo(x, y);
+  }
+  cx.stroke();
+  cx.globalCompositeOperation = 'source-over';
+  // the present: two small marks for the two tones, low and high, on the figure's edge
+  cx.fillStyle = css(LOW, .8); cx.fillRect(lx - LL, ly + LL + 12, LL*2 * 0.5, 2);
+  cx.fillStyle = css(HIGH, .8); cx.fillRect(lx - LL, ly + LL + 18, Math.min(LL*2, LL*2 * 0.5 * r), 2);
+}
+
+// ── the ruler under the hand: the named places, and φ in gold ────────────────
+const tk = document.getElementById('ticks'), tx = tk.getContext('2d'), num = document.getElementById('num');
+let TW = 0;
+function sizeTicks(){
+  const rc = tk.getBoundingClientRect(); TW = rc.width;
+  tk.width = TW * DPR; tk.height = 24 * DPR; drawTicks();
+}
+const THUMB = 8;                               // a range input's track starts half a thumb in
+const xOfR = x => THUMB + (x - 1) * (TW - 2*THUMB);
+function drawTicks(){
+  tx.setTransform(DPR,0,0,DPR,0,0); tx.clearRect(0,0,TW,24);
+  tx.font = '10px -apple-system,Segoe UI,Helvetica,Arial,sans-serif'; tx.textAlign = 'center';
+  const marks = [[1,'1:1'],[3/2,'3:2'],[8/5,'8:5'],[5/3,'5:3'],[2,'2:1']];
+  for (const [x, lab] of marks){
+    const px = xOfR(x);
+    tx.fillStyle = 'rgba(255,255,255,.28)'; tx.fillRect(Math.round(px), 15, 1, 8);
+    if (TW > 360 || x === 1 || x === 2 || x === 1.5) { tx.fillStyle = 'rgba(220,214,204,.5)'; tx.fillText(lab, px + (x === 8/5 ? -8 : x === 5/3 ? 8 : 0), 11); }
+  }
+  const p = xOfR(PHI);
+  tx.fillStyle = 'rgba(255,196,98,.9)'; tx.fillRect(Math.round(p), 13, 1, 10);
+  const m = xOfR(MIRROR);                        // φ's mirror: the same head, turned the other way
+  tx.fillStyle = 'rgba(255,196,98,.4)'; tx.fillRect(Math.round(m), 17, 1, 6);
+}
+let rulerHeld = false;
+// while it walks, the ruler follows the walk even if it still has focus from a click
+function syncRuler(){ if (mode === 'walk' || (!rulerHeld && document.activeElement !== num)) num.value = r.toFixed(4); readout(); }
+num.addEventListener('input', () => { hand(); goTo(+num.value, 0.08); });
+num.addEventListener('pointerdown', () => { rulerHeld = true; });
+window.addEventListener('pointerup', () => { rulerHeld = false; });
+
+const readEl = document.getElementById('read');
+let lastRead = '';
+function readout(){
+  const nm = nameOf(r);
+  let s;
+  if (nm && nm.phi) s = `<b>φ ≈ 1.618 : 1</b> · 833 cents · the number farthest from every fraction`;
+  else if (nm && nm.mirror) s = `<b>1.382 : 1</b> · 560 cents · φ's seed head in a mirror`;
+  else if (nm) s = `<b>${nm.p} : ${nm.q}</b> · ${Math.round(cents(nm.p/nm.q))} cents · the ${nm.n} · lines up every ${nm.q === 1 ? 'turn' : nm.q + ' turns'}`;
+  else { const q = armsOf(r); s = `<b>${r.toFixed(3)} : 1</b> · ${Math.round(cents(r))} cents · ` + (q ? `lines up every ${q === 1 ? 'turn' : q + ' turns'}` : `doesn't line up across these ${N} seeds`); }
+  s += ` · seed spacing ${Math.round(Math.min(1, roomNow) * 100)}% of φ's`;
+  if (s !== lastRead){ readEl.innerHTML = s; lastRead = s; }
+}
+
+// ── sound (off until asked; volume from the first frame, nothing stepped) ────
+let ac = null, master = null, soundOn = false, lo = null, hi = null;
+const vol = document.getElementById('vol');
+const F0 = 196;                               // G3
+function ensureAudio(){
+  if (ac) return;
+  const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+  ac = new AC(); master = ac.createGain(); master.gain.value = 0;
+  const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 2400;
+  master.connect(lp); lp.connect(ac.destination);
+  // a few soft harmonics, so the ear can hear the ratio (pure sines hide most of it)
+  const real = new Float32Array([0,0,0,0,0,0,0]), imag = new Float32Array([0,1,.42,.24,.14,.08,.05]);
+  const wave = ac.createPeriodicWave(real, imag);
+  const voice = (f) => { const o = ac.createOscillator(), g = ac.createGain(); o.setPeriodicWave(wave); o.frequency.value = f; g.gain.value = .5; o.connect(g); g.connect(master); o.start(); return {o, g}; };
+  lo = voice(F0); hi = voice(F0 * r);
+}
+function stepAudio(){
+  if (!ac) return;
+  const now = ac.currentTime;
+  // the ear hears loudness logarithmically: an exponential slider, so the low half is usable
+  const x = vol.value / 100, level = (Math.exp(4*x) - 1) / (Math.exp(4) - 1) * 0.32;
+  const resting = breathUntil > 0 && T < breathUntil;
+  master.gain.setTargetAtTime(soundOn && !resting ? level : 0, now, resting ? 0.4 : 0.08);
+  hi.o.frequency.setTargetAtTime(F0 * r, now, 0.02);
+}
+const soundBtn = document.getElementById('sound');
+soundBtn.addEventListener('click', () => {
+  ensureAudio(); if (!ac) return;
+  ac.resume(); soundOn = !soundOn;
+  soundBtn.setAttribute('aria-pressed', soundOn); soundBtn.textContent = soundOn ? 'sound on' : 'sound off';
+});
+
+// ── the hand ─────────────────────────────────────────────────────────────────
+const hint = document.getElementById('hint');
+let movedFar = 0;
+function hand(){ mode = 'hand'; breathUntil = -1; lastHand = T; }
+function set(x, g = 0.08){
+  x = Math.max(1, Math.min(2, x));
+  movedFar += Math.abs(x - to);
+  if (movedFar > 0.25 && hint.style.opacity !== '0'){ hint.style.opacity = 0; try { localStorage.setItem('walkout.moved', '1'); } catch {} }
+  hand(); goTo(x, g);
+}
+let dragX = null;
+cv.addEventListener('pointerdown', e => { cv.focus(); try { cv.setPointerCapture(e.pointerId); } catch {} dragX = e.clientX; hand(); });
+cv.addEventListener('pointermove', e => {
+  if (dragX === null) return;
+  const dx = e.clientX - dragX; dragX = e.clientX;
+  set(to + dx / (W * (e.shiftKey ? 6 : 1.2)), 0.05);
+});
+cv.addEventListener('pointerup', () => { dragX = null; });
+cv.addEventListener('pointercancel', () => { dragX = null; });
+cv.addEventListener('keydown', e => {
+  const k = e.shiftKey ? 0.02 : 0.002;
+  if (e.key === 'ArrowRight' || e.key === 'ArrowUp'){ set(to + k); e.preventDefault(); }
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowDown'){ set(to - k); e.preventDefault(); }
+});
+document.getElementById('walk').addEventListener('click', () => { startWalk(); });
+
+// ── run ──────────────────────────────────────────────────────────────────────
+resize(); window.addEventListener('resize', resize);
+// the bar can change height without the window changing (a readout that wraps): follow the bar itself
+if (window.ResizeObserver) new ResizeObserver(() => resize()).observe(uiEl);
+// a hidden tab stops the frame loop, and with it the volume's updates: let the sound go quiet first
+document.addEventListener('visibilitychange', () => {
+  if (ac && document.hidden) master.gain.setTargetAtTime(0, ac.currentTime, 0.08);
+});
+// a dismissal earned once is remembered (where the browser lets us remember)
+try { if (localStorage.getItem('walkout.moved')) hint.style.display = 'none'; } catch {}
+startWalk();
+let last = null;
+function frame(ts){
+  if (last === null) last = ts;
+  const d = Math.min(0.05, (ts - last) / 1000); last = ts;
+  step(d); draw();
+  requestAnimationFrame(frame);
+}
+if (!frozen) requestAnimationFrame(frame); else { step(1/60); draw(); }
+
+// the data door: drive and read it with the frame loop frozen
+window.walkout = {
+  step(seconds = 1, hz = 60){ for (let n = 0; n < seconds*hz; n++) step(1/hz); draw(); return this.read(); },
+  read(){
+    const nm = nameOf(r);
+    return { t: +T.toFixed(2), r: +r.toFixed(5), cents: +cents(r).toFixed(1), mode, walkStep: wi,
+      name: nm ? (nm.phi ? 'phi' : nm.n) : null, room: +roomNow.toFixed(3), arms: armsOf(r), grown: Math.floor(grown), said: Object.keys(said).filter(k => said[k]) };
+  },
+  set(x){ set(x, 0.001); }, walk: startWalk, phi: PHI
+};
+})();
+</script>
+</body>
+</html>
