@@ -183,19 +183,22 @@ function measureRoom(X, Y, R){
     const k = Math.floor(X[n]/CELL) + ',' + Math.floor(Y[n]/CELL);
     let b = grid.get(k); if (!b){ b = []; grid.set(k, b); } b.push(n);
   }
-  let sum = 0;
+  let sum = 0; lastTightest = CELL;
   for (let n = 0; n < N; n++){
     const gx = Math.floor(X[n]/CELL), gy = Math.floor(Y[n]/CELL); let best = CELL;
     for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++){
       const b = grid.get((gx+i) + ',' + (gy+j)); if (!b) continue;
       for (const m of b){ if (m === n) continue; const dx = X[m]-X[n], dy = Y[m]-Y[n], d = Math.sqrt(dx*dx+dy*dy); if (d < best) best = d; }
     }
-    R[n] = best; sum += best;
+    R[n] = best; sum += best; if (best < lastTightest) lastTightest = best;
   }
   return sum / N;
 }
+// What makes φ special is not the most room on AVERAGE (other numbers tie or beat it there — scanned 10-18)
+// but the most EVEN room: the tightest seed is better off at φ (and its mirror) than anywhere else on the ruler.
+let lastTightest = 1, tightestPhi = 1, tightestNow = 1;
 { const px = new Float32Array(N), py = new Float32Array(N);
-  placeSeeds(PHI, {x:px, y:py}); roomPhi = measureRoom(px, py, new Float32Array(N)); }
+  placeSeeds(PHI, {x:px, y:py}); roomPhi = measureRoom(px, py, new Float32Array(N)); tightestPhi = lastTightest; }
 
 // ── words, each once ─────────────────────────────────────────────────────────
 const lineEl = document.getElementById('line'), lineText = document.getElementById('lineText');
@@ -234,7 +237,7 @@ function step(d){
   stepWalk(); glide();
   grown = Math.min(N, grown + d * 150);
   placeSeeds(r, {x:sx, y:sy});
-  roomNow = measureRoom(sx, sy, room) / roomPhi;
+  roomNow = measureRoom(sx, sy, room) / roomPhi; tightestNow = lastTightest / tightestPhi;
   // asymmetric, like a landing: crowded, a seed gives its room up at once (seeds can't overlap);
   // given room, it swells into it slowly — a breath in
   const kIn = 1 - Math.exp(-d / 0.35), kOut = 1 - Math.exp(-d / 0.04);
@@ -383,7 +386,7 @@ function readout(){
     const near = Math.abs(c - cents(PHI)) < 3 ? ' · near φ' : Math.abs(c - cents(MIRROR)) < 3 ? ' · near φ’s mirror' : '';
     s = `<b>${r.toFixed(3)} : 1</b> · ${Math.round(c)} cents · ` + (q ? `lines up every ${q === 1 ? 'turn' : q + ' turns'}` : `doesn't line up across these ${N} seeds`) + near;
   }
-  s += ` · seed spacing ${Math.round(Math.min(1, roomNow) * 100)}% of φ's`;
+  s += ` · the tightest seed has ${Math.round(Math.min(1, tightestNow) * 100)}% of its room at φ`;
   if (s !== lastRead){ readEl.innerHTML = s; lastRead = s; }
 }
 
@@ -486,7 +489,7 @@ window.walkout = {
   read(){
     const nm = nameOf(r);
     return { t: +T.toFixed(2), r: +r.toFixed(5), cents: +cents(r).toFixed(1), mode, walkStep: wi,
-      name: nm ? (nm.phi ? 'phi' : nm.n) : null, room: +roomNow.toFixed(3), arms: armsOf(r), grown: Math.floor(grown), said: Object.keys(said).filter(k => said[k]) };
+      name: nm ? (nm.phi ? 'phi' : nm.n) : null, room: +roomNow.toFixed(3), tightest: +tightestNow.toFixed(3), arms: armsOf(r), grown: Math.floor(grown), said: Object.keys(said).filter(k => said[k]) };
   },
   set(x){ set(x, 0.001); }, walk: startWalk, phi: PHI
 };
