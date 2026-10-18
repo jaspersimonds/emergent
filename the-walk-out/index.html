@@ -127,14 +127,20 @@ function armsOf(x){
 }
 
 // ── the walk: out from unison through the Fibonacci ratios to φ, then home ─────
-// [ratio, hold seconds, glide seconds into it]
-const OUT = [[1,3.6,0],[2,3.6,2.4],[3/2,3.6,.66],[5/3,3.6,.66],[8/5,3.6,.66],
-             [13/8,2.1,.66],[21/13,1.5,.5],[34/21,1.2,.4],[55/34,.9,.33],[89/55,.9,.33],[PHI,9,.33]];
-const HOME = [[8/5,1.8,.9],[5/3,1.8,.66],[3/2,1.8,.66],[2,2.4,.66],[1,3.6,2.4]];
+// [ratio, hold seconds, glide seconds into it]. A glide of 0 is a LEAP: 1:1 and 2:1 are the same seed
+// head (a whole turn is no turn), so the picture holds still and only the tone jumps the octave.
+// Each convergent doubles-ish the arms and gets its own beat; the last "almost" (89:55) is held
+// longer, so φ arrives a beat late and lands harder.
+// (Slower than first felt right — his calibration: the first pass is always too fast. The morph between
+// named steps is the most beautiful thing here, so it gets 1.8 s; each convergent gets time to count.)
+const OUT = [[1,3.3,0],[2,3.3,0],[3/2,3.6,1.8],[5/3,3.6,1.8],[8/5,3.6,1.8],
+             [13/8,2.4,1.2],[21/13,2.4,1.2],[34/21,2.4,1.2],[55/34,2.4,1.2],[89/55,3.3,1.2],[PHI,9.9,1.8]];
+const HOME = [[8/5,2.4,1.8],[5/3,2.4,1.2],[3/2,2.4,1.2],[2,3.3,1.2],[1,3.6,0]];
 const WALK = [...OUT.map(s => [...s,'out']), ...HOME.map(s => [...s,'home'])];
 const BREATH = 1.8;                         // silence before it walks out again
 let mode = 'walk', wi = 0, wNext = 0, lastHand = -1e9, breathUntil = -1;
-function goTo(x, g){ from = r; to = x; t0 = T; glideFor = Math.max(1e-3, g); }
+let leapAt = -1;                            // when the walk last leapt (the voice breathes around it)
+function goTo(x, g){ from = r; to = x; t0 = T; glideFor = Math.max(1e-3, g); if (g === 0 && x !== r) leapAt = T; }
 function startWalk(){
   mode = 'walk'; wi = 0; breathUntil = -1;
   goTo(1, Math.abs(r - 1) > .01 ? 1.2 : 0);
@@ -159,6 +165,8 @@ function glide(){
 
 // ── the seed head (Vogel's model: seed n at turn n·(r−1), radius ∝ √n) ─────────
 const sx = new Float32Array(N), sy = new Float32Array(N), room = new Float32Array(N);
+// what each seed shows: its room, followed a beat late — the seed reports the number, it doesn't snap to it
+const shownRoom = new Float32Array(N);
 let roomPhi = 1, roomNow = 1;
 function placeSeeds(x, out){
   const turn = x - 1;
@@ -196,36 +204,63 @@ function say(key, text){
   if (said[key]) return; said[key] = true;
   lineText.textContent = text; lineEl.style.opacity = 1; sayUntil = T + 6;
 }
-let settledFor = 0, lastName = null, armsFor = 0;
+let settledFor = 0, lastName = null, armsFor = 0, noArmsFor = 0;
 function stepWords(){
   const q = armsOf(r);
   armsFor = mode === 'hand' && !nameOf(r) && q >= 6 ? armsFor + dt : 0;
-  if (armsFor > 1.2 && T > sayUntil) say('fraction', `${q} arms. every number on this ruler is a fraction, so somewhere it lines up.`);
+  if (armsFor > 1.2 && T > sayUntil) say('fraction', `${q} arms. every number on this ruler lines up somewhere. can you find one that never does?`);
+  // the answer, when the hand finds no arms: true at this size, and not forever
+  noArmsFor = said.fraction && mode === 'hand' && q === 0 && !nameOf(r) ? noArmsFor + dt : 0;
+  if (noArmsFor > 1.2 && T > sayUntil) say('found', 'no arms — yet. with enough seeds it would. the ones that never line up aren’t on any ruler; φ stays farthest of all.');
   const nm = nameOf(r);
   const key = nm ? (nm.phi ? 'phi' : nm.mirror ? 'mirror' : nm.p+':'+nm.q) : null;
   settledFor = key && key === lastName ? settledFor + dt : 0; lastName = key;
   if (settledFor < 0.5) { if (T > sayUntil) lineEl.style.opacity = 0; return; }
   if (key === '1:1' && !homeSeen) say('unison', 'one against one: unison. every seed lands on the same line.');
-  if (key === '2:1') say('octave', 'two against one: the octave. the waves line up every turn — still one line of seeds.');
-  if (key === '3:2') say('fifth', 'three against two: the fifth. they line up every second turn, and the seeds fall into two arms.');
+  if (key === '2:1') say('octave', 'two against one: the octave. the seeds don’t move — a whole turn is no turn, as an octave is the same note.');
+  if (key === '3:2') say('fifth', 'three against two: the fifth. every second seed comes back to the same line — two arms.');
   if (key === '8:5') say('sixth', 'eight against five: the last interval on this road with a name. five arms.');
-  if (key === 'phi'){ say('phi', '833 cents: the number farthest from every fraction. the waves never line up again, and no seed lands in line with another.'); homeSeen = true; }
+  if (key === 'phi'){ say('phi', '833 cents, farthest from every fraction. nothing lines up again, so every seed has room.'); homeSeen = true; }
   if (key === 'mirror') say('mirror', 'the same seed head as φ, seen in a mirror: a turn of 0.382 instead of 0.618.');
   if (key === '1:1' && homeSeen) say('home', 'music walks this road home. the sunflower walks it away.');
   if (T > sayUntil) lineEl.style.opacity = 0;
 }
 
 // ── the world step ───────────────────────────────────────────────────────────
-let grown = frozen ? N : 0, phase = 0;
+let grown = frozen ? N : 0;
 function step(d){
   if (!(d > 0)) return;                 // the first frame has no time in it
   dt = d; T += d;
   stepWalk(); glide();
   grown = Math.min(N, grown + d * 150);
-  phase += d * 0.35;
   placeSeeds(r, {x:sx, y:sy});
   roomNow = measureRoom(sx, sy, room) / roomPhi;
+  // asymmetric, like a landing: crowded, a seed gives its room up at once (seeds can't overlap);
+  // given room, it swells into it slowly — a breath in
+  const kIn = 1 - Math.exp(-d / 0.35), kOut = 1 - Math.exp(-d / 0.04);
+  for (let n = 0; n < N; n++){
+    const s = shownRoom[n], t = room[n];
+    shownRoom[n] = !s ? t : s + (t - s) * (t > s ? kIn : kOut);
+  }
+  stepPen(d);
+  warmth += (Math.min(1, roomNow) - warmth) * (1 - Math.exp(-d / 1.2));
   stepWords(); stepAudio(); syncRuler();
+}
+let warmth = 0;                              // the field's warmth: the seeds' room, followed slowly
+
+// ── the pen: the two waves drawn against each other, in time ──────────────────
+// One low cycle every 0.9 s. A ratio that lines up comes back to its own path and the path brightens;
+// one that never does keeps finding new ground. The trail remembers the last 14 seconds (~15 passes).
+const PEN_CYCLE = 0.9, PEN_MEMORY = 14, PEN_PHASE = Math.PI / 4;
+// x follows the low wave; y follows the high wave's phase, ADDED UP as it goes, so a change of number
+// bends the path and never tears it. Held at one number, the path is the Lissajous figure of that ratio.
+let penU = 0, penV = 0;
+const pen = [];                              // {x, y, t}: where the pen was, in the figure's own units
+function stepPen(d){
+  const du = d * 2*Math.PI / PEN_CYCLE;
+  penU += du; penV += r * du;
+  pen.push({ x: Math.sin(penU), y: Math.sin(penV + PEN_PHASE), t: T });
+  while (pen.length && pen[0].t < T - PEN_MEMORY) pen.shift();
 }
 
 // ── drawing ──────────────────────────────────────────────────────────────────
@@ -255,14 +290,14 @@ function draw(){
   const R = narrow ? Math.max(40, Math.min(W*0.44, (H - top - 12) / 2)) : Math.min(W*0.3, H*0.4);
   const fx = narrow ? W/2 : W*0.56, fy = narrow ? top + R : H*0.54;
   const unit = R / Math.sqrt(N);
-  // a faint disc where the head will be
+  // a faint disc where the head will be — candlelight that warms, a beat late, as the seeds gain room
   const g = cx.createRadialGradient(fx, fy, 0, fx, fy, R*1.08);
-  g.addColorStop(0, 'rgba(255,196,98,.05)'); g.addColorStop(1, 'rgba(255,196,98,0)');
+  g.addColorStop(0, `rgba(255,196,98,${(0.03 + 0.045 * warmth).toFixed(3)})`); g.addColorStop(1, 'rgba(255,196,98,0)');
   cx.fillStyle = g; cx.beginPath(); cx.arc(fx, fy, R*1.08, 0, Math.PI*2); cx.fill();
-  // the seeds: each as large as its room allows
+  // the seeds: each as large as its room allows, a beat after the room changes
   const shown = Math.floor(grown);
   for (let n = 0; n < shown; n++){
-    const rm = Math.min(1.15, room[n] / roomPhi);          // 1 = as much room as the sunflower gives
+    const rm = Math.min(1.15, shownRoom[n] / roomPhi);     // 1 = as much room as the sunflower gives
     const rad = Math.max(0.55, Math.min(1, rm) * roomPhi * 0.42 * unit);
     const age = Math.min(1, (grown - n) / 40);
     const lit = 0.35 + 0.65 * Math.min(1, rm / 0.72);
@@ -270,24 +305,36 @@ function draw(){
     cx.fillStyle = css(col, (0.35 + 0.6*lit) * age);
     cx.beginPath(); cx.arc(fx + sx[n]*unit, fy + sy[n]*unit, rad, 0, Math.PI*2); cx.fill();
   }
-  // the two waves drawn against each other: closes after q turns, or never
+  // the two waves drawn against each other, by a pen, in time: a ratio that lines up comes back over its
+  // own path and the path brightens; one that never does keeps finding new ground. Older ink is fainter.
   const LL = narrow ? L : Math.min(R*0.36, 92);
   const lx = narrow ? W/2 : Math.max(LL + 12, W*0.56 - R - LL - Math.max(40, W*0.06)), ly = narrow ? hintBottom + 12 + L : fy;
   cx.globalCompositeOperation = 'lighter';
-  cx.lineWidth = 1;
-  const CYC = 21, SEG = 2400;
-  cx.strokeStyle = 'rgba(214,226,255,.16)';
-  cx.beginPath();
-  for (let i = 0; i <= SEG; i++){
-    const u = i / SEG * CYC * 2*Math.PI;
-    const x = lx + Math.sin(u) * LL, y = ly + Math.sin(r*u + phase) * LL;
-    i ? cx.lineTo(x, y) : cx.moveTo(x, y);
+  cx.lineWidth = 1; cx.lineJoin = 'round';
+  const BANDS = 14;                                // one stroke per second of age, so joints never stack light
+  let i = 1;
+  for (let b = BANDS - 1; b >= 0 && pen.length > 1; b--){
+    const older = T - (b + 1) * PEN_MEMORY / BANDS, newer = T - b * PEN_MEMORY / BANDS;
+    while (i < pen.length && pen[i].t < older) i++;
+    if (i >= pen.length) break;
+    const age = (b + 0.5) / BANDS;
+    cx.strokeStyle = `rgba(214,226,255,${(0.34 * Math.pow(1 - age, 1.6)).toFixed(3)})`;
+    cx.beginPath(); cx.moveTo(lx + pen[i-1].x * LL, ly + pen[i-1].y * LL);
+    const first = i;
+    while (i < pen.length && pen[i].t <= newer){ cx.lineTo(lx + pen[i].x * LL, ly + pen[i].y * LL); i++; }
+    cx.stroke();
+    if (i > first && i < pen.length) i--;            // the next band starts where this one ended
   }
-  cx.stroke();
+  if (pen.length){
+    const p = pen[pen.length - 1], hx = lx + p.x * LL, hy = ly + p.y * LL;
+    const hg = cx.createRadialGradient(hx, hy, 0, hx, hy, 9);
+    hg.addColorStop(0, 'rgba(225,235,255,.5)'); hg.addColorStop(1, 'rgba(225,235,255,0)');
+    cx.fillStyle = hg; cx.beginPath(); cx.arc(hx, hy, 9, 0, Math.PI*2); cx.fill();
+  }
   cx.globalCompositeOperation = 'source-over';
   // the present: two small marks for the two tones, low and high, on the figure's edge
-  cx.fillStyle = css(LOW, .8); cx.fillRect(lx - LL, ly + LL + 12, LL*2 * 0.5, 2);
-  cx.fillStyle = css(HIGH, .8); cx.fillRect(lx - LL, ly + LL + 18, Math.min(LL*2, LL*2 * 0.5 * r), 2);
+  cx.fillStyle = css(LOW, .45); cx.fillRect(lx - LL, ly + LL + 12, LL*2 * 0.5, 2);      // quiet: the head is the one figure
+  cx.fillStyle = css(HIGH, .45); cx.fillRect(lx - LL, ly + LL + 18, Math.min(LL*2, LL*2 * 0.5 * r), 2);
 }
 
 // ── the ruler under the hand: the named places, and φ in gold ────────────────
@@ -323,12 +370,19 @@ window.addEventListener('pointerup', () => { rulerHeld = false; });
 const readEl = document.getElementById('read');
 let lastRead = '';
 function readout(){
-  const nm = nameOf(r);
+  // on the walk, a name shows once the step has landed — passing names flicker past in a frame each
+  const passing = mode === 'walk' && T - t0 < glideFor;
+  const nm = passing ? null : nameOf(r);
   let s;
   if (nm && nm.phi) s = `<b>φ ≈ 1.618 : 1</b> · 833 cents · the number farthest from every fraction`;
   else if (nm && nm.mirror) s = `<b>1.382 : 1</b> · 560 cents · φ's seed head in a mirror`;
   else if (nm) s = `<b>${nm.p} : ${nm.q}</b> · ${Math.round(cents(nm.p/nm.q))} cents · the ${nm.n} · lines up every ${nm.q === 1 ? 'turn' : nm.q + ' turns'}`;
-  else { const q = armsOf(r); s = `<b>${r.toFixed(3)} : 1</b> · ${Math.round(cents(r))} cents · ` + (q ? `lines up every ${q === 1 ? 'turn' : q + ' turns'}` : `doesn't line up across these ${N} seeds`); }
+  else if (passing) s = `<b>${r.toFixed(3)} : 1</b> · ${Math.round(cents(r))} cents`;
+  else {
+    const q = armsOf(r), c = cents(r);
+    const near = Math.abs(c - cents(PHI)) < 3 ? ' · near φ' : Math.abs(c - cents(MIRROR)) < 3 ? ' · near φ’s mirror' : '';
+    s = `<b>${r.toFixed(3)} : 1</b> · ${Math.round(c)} cents · ` + (q ? `lines up every ${q === 1 ? 'turn' : q + ' turns'}` : `doesn't line up across these ${N} seeds`) + near;
+  }
   s += ` · seed spacing ${Math.round(Math.min(1, roomNow) * 100)}% of φ's`;
   if (s !== lastRead){ readEl.innerHTML = s; lastRead = s; }
 }
@@ -356,8 +410,23 @@ function stepAudio(){
   const x = vol.value / 100, level = (Math.exp(4*x) - 1) / (Math.exp(4) - 1) * 0.32;
   const resting = breathUntil > 0 && T < breathUntil;
   master.gain.setTargetAtTime(soundOn && !resting ? level : 0, now, resting ? 0.4 : 0.08);
+  // the low voice holds, like a cantus; the high one is sung. On the walk it breathes out while it moves
+  // and swells in when it lands — a glide is a breath, not a siren. A leap dips, jumps inside the dip,
+  // and comes back. In the hand it follows you, held.
+  if (leapAt !== heardLeap){
+    heardLeap = leapAt;
+    hi.g.gain.setTargetAtTime(0.06, now, 0.03);
+    hi.o.frequency.setTargetAtTime(F0 * r, now + 0.09, 0.012);
+    hi.g.gain.setTargetAtTime(0.5, now + 0.13, 0.22);
+    quietUntil = T + 0.16;
+    return;
+  }
+  if (T < quietUntil) return;
   hi.o.frequency.setTargetAtTime(F0 * r, now, 0.02);
+  const moving = mode === 'walk' && T - t0 < glideFor;
+  hi.g.gain.setTargetAtTime(moving ? 0.16 : 0.5, now, moving ? 0.06 : 0.22);
 }
+let heardLeap = -1, quietUntil = -1;
 const soundBtn = document.getElementById('sound');
 soundBtn.addEventListener('click', () => {
   ensureAudio(); if (!ac) return;
